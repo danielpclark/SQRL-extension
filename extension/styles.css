@@ -7,7 +7,7 @@
   --sqrl-blue-dark: #006caa;
   --sqrl-blue-darker: #005c90;
   --sqrl-blue-deep: #00456c;
-  --bg: #f3f4f5;
+  --bg: #ffffff;
   --panel: #ffffff;
   --text: #141618;
   --muted: #76818d;
@@ -26,23 +26,6 @@
   --radius: 10px;
   --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #141618;
-    --panel: #1e2226;
-    --text: #e6e9ec;
-    --muted: #9aa5b0;
-    --border: #353b41;
-    --primary: #2b94d6;
-    --primary-hover: #007cc3;
-    --primary-text: #ffffff;
-    --accent: #2b94d6;
-    --ok: #8bc34a;
-    --warn-bg: #3a3012;
-    --warn-text: #fdca47;
-    --header-bg: #005c90;
-  }
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
@@ -86,7 +69,7 @@ label.checkbox { font-weight: normal; display: flex; gap: 8px; align-items: flex
 label.checkbox input { margin-top: 3px; }
 input[type=text], input[type=password], input[type=number], select, textarea {
   width: 100%; padding: 8px 10px; margin-top: 4px; font: inherit; color: var(--text);
-  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  background: #ffffff; border: 1px solid var(--border); border-radius: 8px;
 }
 textarea { min-height: 120px; font-family: var(--mono); font-size: 13px; }
 textarea.textual { min-height: 150px; letter-spacing: .5px; }
@@ -127,7 +110,7 @@ details { margin-top: 12px; }
 details summary { cursor: pointer; color: var(--muted); }
 .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
 .tabs button.active { background: var(--primary); color: var(--primary-text); border-color: var(--primary); }
-code { font-family: var(--mono); font-size: 12px; background: var(--bg); padding: 1px 4px; border-radius: 4px; }
+code { font-family: var(--mono); font-size: 12px; background: #f3f4f5; padding: 1px 4px; border-radius: 4px; }
 dl.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 8px 0; }
 dl.kv dt { color: var(--muted); }
 dl.kv dd { margin: 0; word-break: break-all; }
