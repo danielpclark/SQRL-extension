@@ -1,0 +1,70 @@
+name: Release
+
+# Creating a tag such as v1.0.0 builds the Chrome and Firefox bundles and attaches them,
+# plus a source archive for AMO's reviewers, to a GitHub release. Store uploads are the
+# manual steps documented in README.md; the commented jobs at the end automate them once
+# the store credentials exist as repository secrets.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: cargo install wasm-bindgen-cli --version 0.2.129 --locked
+      - name: Check that the tag matches the manifest version
+        run: |
+          MANIFEST=$(python3 -c "import json;print(json.load(open('extension/manifest.json'))['version'])")
+          test "v$MANIFEST" = "${GITHUB_REF_NAME}" || { echo "tag ${GITHUB_REF_NAME} != manifest v$MANIFEST"; exit 1; }
+      - run: cargo test --release -p sqrl-core
+      - run: ./build.sh
+      - name: Lint the Firefox bundle
+        run: npx --yes web-ext lint --source-dir dist/firefox
+      - name: Source archive (AMO asks for it because the bundle contains compiled WebAssembly)
+        run: git archive --format=zip --prefix=sqrl-extension-src/ -o "dist/sqrl-login-${GITHUB_REF_NAME}-source.zip" HEAD
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
+          generate_release_notes: true
+
+  # --- Optional store automation ---------------------------------------------------------
+  # chrome:
+  #   needs: build
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: actions/setup-node@v4
+  #       with: { node-version: "22" }
+  #     - uses: dtolnay/rust-toolchain@stable
+  #       with: { targets: wasm32-unknown-unknown }
+  #     - run: cargo install wasm-bindgen-cli --version 0.2.129 --locked && ./build.sh
+  #     - run: npx --yes chrome-webstore-upload-cli@3 upload --source dist/sqrl-login-chrome-*.zip --auto-publish
+  #       env:
+  #         EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
+  #         CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
+  #         CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
+  #         REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
+  #
+  # firefox:
+  #   needs: build
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - (same checkout/toolchain/build steps as above)
+  #     - run: npx --yes web-ext sign --source-dir dist/firefox --channel listed
+  #       env:
+  #         WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
+  #         WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}

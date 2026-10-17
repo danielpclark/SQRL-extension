@@ -1,5 +1,7 @@
 # SQRL Login – browser extension
 
+<img src="extension/icons/icon128.png" alt="SQRL" width="96" align="right">
+
 A complete client for **SQRL (Secure Quick Reliable Login)**, Steve Gibson's password-less
 authentication system (<https://www.grc.com/sqrl/sqrl.htm>), packaged as a Manifest V3
 browser extension for Chrome, Edge, Brave and Firefox.
@@ -11,10 +13,9 @@ storage, fetch) and the user interface.
 ## What it implements
 
 The implementation follows GRC's four specification documents (SQRL Explained, Operating
-Details v1.01, Cryptography v1.04 and On The Wire v1.07, all December 2019 or later), the
-spec pages on grc.com, and the rulings Steve Gibson made in the `grc.sqrl` newsgroup where
-the documents are ambiguous. Where an older decision was later reversed, the later one is
-used.
+Details v1.01, Cryptography v1.04 and On The Wire v1.07, all from late 2019), the spec
+pages on grc.com, and the rulings Steve Gibson made in the `grc.sqrl` newsgroup where the
+documents are ambiguous. Where an older decision was later reversed, the later one is used.
 
 * **Identities** – creation from 256 bits of entropy, the 24-digit rescue code (extracted
   by long division, as specified), `EnHash`, the Identity Master / Lock / Unlock keys.
@@ -55,13 +56,15 @@ used.
 | `crates/sqrl-wasm` | `wasm-bindgen` bindings exposing the core to JavaScript. |
 | `crates/sqrl-test-server` | A small plain-HTTP SQRL site for exercising the extension locally. |
 | `extension/` | The MV3 extension: `manifest.json`, `background.js`, `content.js`, pages, and `js/` (crypto worker, login dialog, identity manager, options, QR encoder). `extension/pkg/` is generated. |
-| `tests/` | Node smoke test of the wasm package against the test server, and a QR encoder cross-check. |
+| `tests/` | Node smoke test of the wasm package against the test server, and a decoder-based check of the QR encoder. |
+| `store/` | Promotional images for the store listings, generated from the official artwork. |
+| `.github/workflows/` | CI (tests, build, lint) and the tag-driven release that attaches store bundles to a GitHub release. |
 
 ## Building
 
 Requirements: a Rust toolchain with the `wasm32-unknown-unknown` target, `wasm-bindgen-cli`
-**0.2.129** (the version pinned in `crates/sqrl-wasm/Cargo.toml`), and Node 20+ for the
-smoke test.
+**0.2.129** (the version pinned in `crates/sqrl-wasm/Cargo.toml`), Python 3, `zip`, and
+Node 20+ for the JavaScript tests.
 
 ```fish
 rustup target add wasm32-unknown-unknown
@@ -69,8 +72,11 @@ cargo install wasm-bindgen-cli --version 0.2.129 --locked
 ./build.sh --test       # runs the Rust tests, builds the wasm, assembles dist/
 ```
 
-`build.sh` produces `extension/pkg/` (the wasm and its glue), an unpacked copy in
-`dist/sqrl-extension/` and `dist/sqrl-extension.zip`.
+`build.sh` produces `extension/pkg/` (the wasm and its glue) and, under `dist/`, unpacked
+`chrome/` and `firefox/` bundles plus `sqrl-login-chrome-vX.Y.Z.zip` and
+`sqrl-login-firefox-vX.Y.Z.zip`. The two differ only in their manifests: Chrome gets
+`background.service_worker`, Firefox gets `background.scripts` and its
+`browser_specific_settings`.
 
 ### Tests
 
@@ -78,21 +84,19 @@ cargo install wasm-bindgen-cli --version 0.2.129 --locked
 cargo test --release -p sqrl-core              # 62 unit, flow and test-vector tests
 cargo build --release -p sqrl-test-server; and node tests/smoke.mjs
 python3 -m pip install zxing-cpp numpy; and node tests/qr-check.mjs
+npx --yes web-ext lint --source-dir dist/firefox
 ```
 
 The Rust tests run EnScrypt many times, so use `--release`.
 
-## Installing the extension
+## Installing a development build
 
 **Chrome / Edge / Brave:** open `chrome://extensions`, enable *Developer mode*, choose
-*Load unpacked* and select `dist/sqrl-extension` (or `extension/` after a build).
+*Load unpacked* and select `dist/chrome`.
 
 **Firefox:** open `about:debugging#/runtime/this-firefox`, choose *Load Temporary Add-on*
-and select `dist/sqrl-extension/manifest.json`. Firefox asks for host permission on first
-use of a site; the login dialog requests it.
-
-The manifest declares both `background.service_worker` (Chrome) and `background.scripts`
-(Firefox); each browser ignores the key it does not use.
+and select `dist/firefox/manifest.json`. Firefox asks for host permission on first use of
+a site; the login dialog requests it.
 
 ## Using it
 
@@ -109,6 +113,57 @@ The manifest declares both `background.service_worker` (Chrome) and `background.
 For local testing: `cargo run --release -p sqrl-test-server` and open
 <http://localhost:8080/>. The site uses `qrl://` (plain HTTP), which the extension accepts
 only for localhost.
+
+## Publishing to the stores
+
+Both stores want the same things: the zip built by `build.sh`, the 128×128 icon
+(`extension/icons/icon128.png`; `icon512.png` is there for listings that want a larger
+one), at least one screenshot, a short and a long description, and a privacy policy. The
+privacy policy is [PRIVACY.md](PRIVACY.md); host it somewhere public (the GitHub file URL
+works) and link it from both listings. Bump `version` in `extension/manifest.json` (and
+`Cargo.toml`) before every upload: stores refuse a version they have already seen.
+
+### Chrome Web Store (also serves Edge and Brave users)
+
+1. Register at <https://chrome.google.com/webstore/devconsole/> (one-time fee) and create
+   a new item by uploading `dist/sqrl-login-chrome-vX.Y.Z.zip`.
+2. Fill the listing: summary (the manifest description is used by default), detailed
+   description, category *Productivity* or *Developer Tools*, icon, screenshots of 1280×800
+   or 640×400, and the optional promo images from `store/` (440×280 small tile, 1400×560
+   marquee).
+3. On the *Privacy* tab: single purpose ("Sign in to websites with SQRL"), a justification
+   for each permission (the text in PRIVACY.md is written to be pasted there), the privacy
+   policy URL, and certify that no remote code is used (the WebAssembly is bundled; the
+   `'wasm-unsafe-eval'` CSP entry is the standard way to allow it).
+4. Submit for review. Broad host access (`https://*/*`) triggers a manual review; it is
+   inherent to a SQRL client, which must POST to whichever site the user signs in to.
+
+### Firefox Add-ons (addons.mozilla.org)
+
+1. Create an account at <https://addons.mozilla.org/developers/> and choose *Submit a New
+   Add-on*, *On this site*. Upload `dist/sqrl-login-firefox-vX.Y.Z.zip`.
+2. AMO asks whether the add-on contains compiled or minified code: answer **yes** (the
+   WebAssembly) and upload the source archive the release workflow produces
+   (`sqrl-login-vX.Y.Z-source.zip`) or `git archive` output, with the build instructions
+   above. Reviewers rebuild it; `build.sh` is deterministic given the pinned toolchain.
+3. Fill the listing, link the privacy policy, and submit. The manifest already declares
+   `data_collection_permissions: none`, which AMO requires for new submissions.
+4. For Edge's own store (optional): <https://partner.microsoft.com/dashboard/microsoftedge>
+   accepts the Chrome zip unchanged.
+
+### Releases on GitHub
+
+Creating a tag that matches the manifest version (for example `v1.0.0`) runs
+`.github/workflows/release.yml`, which rebuilds, lints, and attaches the Chrome zip, the
+Firefox zip and a source archive to a GitHub release with generated notes:
+
+```fish
+git tag v1.0.0; and git push origin v1.0.0
+```
+
+The workflow file contains commented jobs that upload to the Chrome Web Store
+(`chrome-webstore-upload-cli`) and sign/publish on AMO (`web-ext sign`) once the store API
+credentials are added as repository secrets.
 
 ## Security notes
 
@@ -127,6 +182,18 @@ only for localhost.
 * Internationalized domain names must appear in the `sqrl://` link in Punycode form (as
   DNS sees them); the extension does not convert Unicode hosts.
 
+## Credits
+
+SQRL was designed by Steve Gibson of Gibson Research Corporation, who published the
+specification and placed it, together with the official logo used here, in the public
+domain (<https://www.grc.com/sqrl/logo.htm>). The colors follow the official logo background
+(RGB 0/124/195) and the sqrl.grc.com site theme.
+
 ## License
 
-MIT.
+This project is released under the **MIT License**. You may use, copy, modify, merge,
+publish, distribute, sublicense and sell copies of it, provided the copyright notice and
+permission notice in [LICENSE](LICENSE) are included; it comes without warranty of any kind.
+See the [LICENSE](LICENSE) file for the full text.
+
+Copyright © 2026 Daniel P. Clark.
