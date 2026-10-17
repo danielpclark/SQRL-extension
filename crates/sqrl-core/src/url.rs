@@ -56,10 +56,17 @@ impl SqrlUrl {
             Some((p, q)) => (p.to_string(), q.to_string()),
             None => (path_and_query.to_string(), String::new()),
         };
-        let path = if path.is_empty() { "/".to_string() } else { path };
+        let path = if path.is_empty() {
+            "/".to_string()
+        } else {
+            path
+        };
 
         // strip user info
-        let hostport = authority_raw.rsplit_once('@').map(|(_, h)| h).unwrap_or(authority_raw);
+        let hostport = authority_raw
+            .rsplit_once('@')
+            .map(|(_, h)| h)
+            .unwrap_or(authority_raw);
         let (host, port) = split_host_port(hostport)?;
         if host.is_empty() {
             return Err(Error::Format("missing host".into()));
@@ -73,7 +80,9 @@ impl SqrlUrl {
             None => host.clone(),
         };
         if scheme == "qrl" && !is_loopback(&host) {
-            return Err(Error::Format("plain-http qrl:// URLs are only allowed for localhost".into()));
+            return Err(Error::Format(
+                "plain-http qrl:// URLs are only allowed for localhost".into(),
+            ));
         }
 
         let mut nut = None;
@@ -82,10 +91,16 @@ impl SqrlUrl {
         for (k, v) in query_pairs(&query) {
             match k.as_str() {
                 "nut" => nut = Some(v),
-                "x" => path_extension = v.parse::<usize>().map_err(|_| Error::Format("invalid x= parameter".into()))?,
+                // GRC's client treats `x=` and `X=` identically and parses the value with an
+                // "intolerant" converter that stops at the first non-digit.
+                "x" | "X" => {
+                    let digits: String = v.chars().take_while(|c| c.is_ascii_digit()).collect();
+                    path_extension = digits.parse::<usize>().unwrap_or(0);
+                }
                 "can" => {
                     let bytes = b64u_decode(&v)?;
-                    let s = String::from_utf8(bytes).map_err(|_| Error::Format("can= is not UTF-8".into()))?;
+                    let s = String::from_utf8(bytes)
+                        .map_err(|_| Error::Format("can= is not UTF-8".into()))?;
                     cancel_url = Some(s);
                 }
                 _ => {}
@@ -150,7 +165,9 @@ impl SqrlUrl {
     pub fn post_url_for_qry(&self, qry: &str) -> Result<String> {
         let qry = qry.trim();
         if !qry.starts_with('/') || qry.starts_with("//") {
-            return Err(Error::Protocol(format!("qry must be a server-relative path, got '{qry}'")));
+            return Err(Error::Protocol(format!(
+                "qry must be a server-relative path, got '{qry}'"
+            )));
         }
         Ok(format!("{}{}", self.origin(), qry))
     }
@@ -188,7 +205,10 @@ impl SqrlUrl {
             _ => return false,
         };
         let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
-        let hostport = rest[..end].rsplit_once('@').map(|(_, h)| h).unwrap_or(&rest[..end]);
+        let hostport = rest[..end]
+            .rsplit_once('@')
+            .map(|(_, h)| h)
+            .unwrap_or(&rest[..end]);
         match split_host_port(hostport) {
             Ok((h, _)) => h.eq_ignore_ascii_case(&self.host),
             Err(_) => false,
@@ -203,7 +223,9 @@ fn is_loopback(host: &str) -> bool {
 fn split_host_port(hostport: &str) -> Result<(String, Option<u16>)> {
     if let Some(rest) = hostport.strip_prefix('[') {
         // IPv6 literal
-        let close = rest.find(']').ok_or_else(|| Error::Format("unterminated IPv6 literal".into()))?;
+        let close = rest
+            .find(']')
+            .ok_or_else(|| Error::Format("unterminated IPv6 literal".into()))?;
         let host = format!("[{}]", &rest[..close]);
         let after = &rest[close + 1..];
         if after.is_empty() {
@@ -217,7 +239,9 @@ fn split_host_port(hostport: &str) -> Result<(String, Option<u16>)> {
     }
     match hostport.rsplit_once(':') {
         Some((h, p)) => {
-            let port = p.parse::<u16>().map_err(|_| Error::Format("invalid port".into()))?;
+            let port = p
+                .parse::<u16>()
+                .map_err(|_| Error::Format("invalid port".into()))?;
             Ok((h.to_string(), Some(port)))
         }
         None => Ok((hostport.to_string(), None)),
@@ -274,7 +298,10 @@ mod tests {
         assert_eq!(u.site_key, "www.example.com");
         assert_eq!(u.nut.as_deref(), Some("abc123"));
         assert_eq!(u.post_url(), "https://www.example.com/cli.sqrl?nut=abc123");
-        assert_eq!(u.post_url_for_qry("/cli.sqrl?nut=def").unwrap(), "https://www.example.com/cli.sqrl?nut=def");
+        assert_eq!(
+            u.post_url_for_qry("/cli.sqrl?nut=def").unwrap(),
+            "https://www.example.com/cli.sqrl?nut=def"
+        );
         assert!(u.post_url_for_qry("https://evil.example/cli").is_err());
         assert!(u.post_url_for_qry("//evil.example/cli").is_err());
     }
@@ -285,23 +312,94 @@ mod tests {
         assert_eq!(u.authority, "example.com:8443");
         assert_eq!(u.port, Some(8443));
         assert_eq!(u.site_key, "example.com/jimbo");
-        assert_eq!(u.post_url(), "https://example.com:8443/jimbo/cli.sqrl?x=6&nut=1");
+        assert_eq!(
+            u.post_url(),
+            "https://example.com:8443/jimbo/cli.sqrl?x=6&nut=1"
+        );
         // x larger than the path just takes the whole path
         let u = SqrlUrl::parse("sqrl://example.com/ab?x=99&nut=1").unwrap();
         assert_eq!(u.site_key, "example.com/ab");
         // GRC's own example
         let u = SqrlUrl::parse("sqrl://www.grc.com/sqrl?x=5&nut=Na2MOglf7NyyupQ8-dtj1g").unwrap();
         assert_eq!(u.site_key, "www.grc.com/sqrl");
+        // Examples from "SQRL Operating Details" §SQRL URL examples
+        assert_eq!(
+            SqrlUrl::parse("sqrl://ExAmPlE.cOm/?nut=1")
+                .unwrap()
+                .site_key,
+            "example.com"
+        );
+        assert_eq!(
+            SqrlUrl::parse("sqrl://example.com:44344/?nut=1")
+                .unwrap()
+                .site_key,
+            "example.com"
+        );
+        assert_eq!(
+            SqrlUrl::parse("sqrl://jonny@example.com/?nut=1")
+                .unwrap()
+                .site_key,
+            "example.com"
+        );
+        assert_eq!(
+            SqrlUrl::parse("sqrl://Jonny:Secret@example.com/?nut=1")
+                .unwrap()
+                .site_key,
+            "example.com"
+        );
+        assert_eq!(
+            SqrlUrl::parse("sqrl://example.com/jimbo/?x=6&nut=1")
+                .unwrap()
+                .site_key,
+            "example.com/jimbo"
+        );
+        assert_eq!(
+            SqrlUrl::parse("sqrl://EXAMPLE.COM/JIMBO?x=16&nut=1")
+                .unwrap()
+                .site_key,
+            "example.com/JIMBO"
+        );
+        // the extension never reaches into the query, X= is accepted, and parsing stops at a non-digit
+        assert_eq!(
+            SqrlUrl::parse("sqrl://www.domain.com/sqrl?x=9999&nut=zingdoodle")
+                .unwrap()
+                .site_key,
+            "www.domain.com/sqrl"
+        );
+        assert_eq!(
+            SqrlUrl::parse("sqrl://example.com/abc?X=2&nut=1")
+                .unwrap()
+                .site_key,
+            "example.com/a"
+        );
+        assert_eq!(
+            SqrlUrl::parse("sqrl://example.com/abc?x=2z&nut=1")
+                .unwrap()
+                .site_key,
+            "example.com/a"
+        );
+        assert_eq!(
+            SqrlUrl::parse("sqrl://example.com/abc?x=0&nut=1")
+                .unwrap()
+                .site_key,
+            "example.com"
+        );
     }
 
     #[test]
     fn cancel_url() {
         let can = b64u_encode(b"https://example.com/cancelled");
         let u = SqrlUrl::parse(&format!("sqrl://example.com/cli.sqrl?nut=1&can={can}")).unwrap();
-        assert_eq!(u.cancel_url.as_deref(), Some("https://example.com/cancelled"));
+        assert_eq!(
+            u.cancel_url.as_deref(),
+            Some("https://example.com/cancelled")
+        );
         let can = b64u_encode(b"/login?cancel=1");
         let u = SqrlUrl::parse(&format!("sqrl://example.com/cli.sqrl?nut=1&can={can}")).unwrap();
-        assert_eq!(u.cancel_url.as_deref(), Some("https://example.com/login?cancel=1"));
+        assert_eq!(
+            u.cancel_url.as_deref(),
+            Some("https://example.com/login?cancel=1")
+        );
     }
 
     #[test]

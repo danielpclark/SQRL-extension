@@ -27,6 +27,7 @@ function fileInfo(file, handle) {
     hasPassword: file.hasPasswordBlock(),
     hasRescue: file.hasRescueBlock(),
     previousCount: file.previousCount(),
+    edition: file.edition(),
     settings: JSON.parse(file.settings()),
     iterations: file.passwordIterations(),
     text: file.toText()
@@ -102,7 +103,8 @@ const ops = {
     }
     return out;
   },
-  quickpassSeal: ({ key, hint, logN, ms }) => ({ blob: sqrl.quickpassSeal(key, hint, logN || 9, ms || 500) }),
+  // QuickPass material is EnScrypted for one second (SQRL Cryptography, "EnScryption Durations").
+  quickpassSeal: ({ key, hint, logN, ms }) => ({ blob: sqrl.quickpassSeal(key, hint, logN || 9, ms || 1000) }),
   quickpassOpen: ({ blob, hint, logN }) => ({ key: sqrl.quickpassOpen(blob, hint, logN || 9) }),
 
   sessionNew: ({ unlocked, url, options, altId }) => {
@@ -120,6 +122,7 @@ const ops = {
     take(session).setButton(btn);
     return {};
   },
+  sessionAskButtonUrl: ({ session, index }) => ({ url: take(session).askButtonUrl(index) ?? null }),
   sessionTryNextPrevious: ({ session }) => ({ more: take(session).tryNextPrevious() }),
 
   free: ({ handle }) => {

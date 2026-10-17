@@ -36,24 +36,32 @@ pub const FLAG_UPDATE_AUTOMATICALLY: u16 = 0x0002;
 pub const FLAG_SQRL_ONLY: u16 = 0x0004;
 /// Type 1 option flag: request that sites disable account recovery by other means (`hardlock`).
 pub const FLAG_NO_BYPASS: u16 = 0x0008;
-/// Type 1 option flag: warn when a remote (non-CPS) login is attempted.
-pub const FLAG_WARN_REMOTE_MITM: u16 = 0x0010;
-/// Type 1 option flag: clear the QuickPass when the system sleeps / goes idle.
+/// Type 1 option flag 0x0010: warn of a possible MITM attack when the server reports that the
+/// query's IP does not match the IP that requested the SQRL URL.
+pub const FLAG_WARN_MITM: u16 = 0x0010;
+/// Type 1 option flag 0x0020: discard the QuickPass when the system blanks, sleeps or suspends.
 pub const FLAG_CLEAR_QUICKPASS_ON_SLEEP: u16 = 0x0020;
-/// Type 1 option flag: clear the QuickPass when the user switches accounts.
+/// Type 1 option flag 0x0040: discard the QuickPass when the user is switched.
 pub const FLAG_CLEAR_QUICKPASS_ON_SWITCH: u16 = 0x0040;
-/// Type 1 option flag: warn when a site does not support CPS.
-pub const FLAG_NO_CPS_WARNING: u16 = 0x0080;
-/// Type 1 option flag: warn when a possible man-in-the-middle is detected (IP mismatch).
-pub const FLAG_MITM_WARNING: u16 = 0x0100;
-/// Default option flags for a newly created identity.
+/// Type 1 option flag 0x0080: discard the QuickPass after the idle timeout (minutes) elapses.
+pub const FLAG_CLEAR_QUICKPASS_ON_IDLE: u16 = 0x0080;
+/// Type 1 option flag 0x0100: warn whenever a non-CPS authentication is attempted.
+pub const FLAG_WARN_NON_CPS: u16 = 0x0100;
+/// Default option flags for a newly created identity (0x01F3, per the S4 specification).
 pub const DEFAULT_OPTION_FLAGS: u16 = FLAG_CHECK_FOR_UPDATES
     | FLAG_UPDATE_AUTOMATICALLY
-    | FLAG_WARN_REMOTE_MITM
+    | FLAG_WARN_MITM
     | FLAG_CLEAR_QUICKPASS_ON_SLEEP
     | FLAG_CLEAR_QUICKPASS_ON_SWITCH
-    | FLAG_NO_CPS_WARNING
-    | FLAG_MITM_WARNING;
+    | FLAG_CLEAR_QUICKPASS_ON_IDLE
+    | FLAG_WARN_NON_CPS;
+
+/// Normalize user-typed secret text the way all SQRL clients must before EnScrypt: Unicode
+/// NFKC composition, then UTF-8 (SQRL Cryptography §"Processing User Input").
+pub fn normalize_password(password: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    password.nfkc().collect()
+}
 
 const ZERO_IV: [u8; 12] = [0u8; 12];
 const TYPE1_LEN: usize = 125;
@@ -140,11 +148,16 @@ impl Type1Block {
 
     fn parse(b: &[u8]) -> Result<Self> {
         if b.len() != TYPE1_LEN {
-            return Err(Error::Format(format!("type 1 block must be {TYPE1_LEN} bytes, got {}", b.len())));
+            return Err(Error::Format(format!(
+                "type 1 block must be {TYPE1_LEN} bytes, got {}",
+                b.len()
+            )));
         }
         let pt_len = le_u16(&b[4..6]) as usize;
         if pt_len != TYPE1_PT_LEN {
-            return Err(Error::Format(format!("unsupported type 1 plaintext length {pt_len}")));
+            return Err(Error::Format(format!(
+                "unsupported type 1 plaintext length {pt_len}"
+            )));
         }
         Ok(Self {
             iv: b[6..18].try_into().unwrap(),
@@ -165,7 +178,16 @@ impl Type1Block {
 
     /// Derive the AES key from the password (slow: runs EnScrypt for `iterations`).
     pub fn derive_key(&self, password: &str, progress: impl FnMut(u32)) -> [u8; 32] {
-        enscrypt_iterations(password.as_bytes(), &self.salt, self.settings.log_n, self.iterations, progress)
+        let mut pw = normalize_password(password);
+        let key = enscrypt_iterations(
+            pw.as_bytes(),
+            &self.salt,
+            self.settings.log_n,
+            self.iterations,
+            progress,
+        );
+        pw.zeroize();
+        key
     }
 
     /// Decrypt IMK and ILK with an already-derived key.
@@ -195,8 +217,16 @@ impl Type1Block {
         let salt: [u8; 16] = random_array();
         let iv: [u8; 12] = random_array();
         let duration_ms = settings.pw_verify_seconds.max(1) as u64 * 1000;
-        let (mut key, iterations) =
-            enscrypt_duration(password.as_bytes(), &salt, settings.log_n, duration_ms, now_ms, progress);
+        let mut pw = normalize_password(password);
+        let (mut key, iterations) = enscrypt_duration(
+            pw.as_bytes(),
+            &salt,
+            settings.log_n,
+            duration_ms,
+            now_ms,
+            progress,
+        );
+        pw.zeroize();
         let block = Self::encrypt_with_key(imk, ilk, &key, salt, iv, iterations, settings);
         key.zeroize();
         block
@@ -271,7 +301,10 @@ impl Type2Block {
 
     fn parse(b: &[u8]) -> Result<Self> {
         if b.len() != TYPE2_LEN {
-            return Err(Error::Format(format!("type 2 block must be {TYPE2_LEN} bytes, got {}", b.len())));
+            return Err(Error::Format(format!(
+                "type 2 block must be {TYPE2_LEN} bytes, got {}",
+                b.len()
+            )));
         }
         Ok(Self {
             salt: b[4..20].try_into().unwrap(),
@@ -285,7 +318,13 @@ impl Type2Block {
     /// Decrypt the IUK with the rescue code (slow: runs EnScrypt for `iterations`).
     pub fn decrypt(&self, rescue_code: &str, progress: impl FnMut(u32)) -> Result<[u8; 32]> {
         let digits = normalize_rescue_code(rescue_code)?;
-        let mut key = enscrypt_iterations(digits.as_bytes(), &self.salt, self.log_n, self.iterations, progress);
+        let mut key = enscrypt_iterations(
+            digits.as_bytes(),
+            &self.salt,
+            self.log_n,
+            self.iterations,
+            progress,
+        );
         let mut ct = Vec::with_capacity(48);
         ct.extend_from_slice(&self.enc_iuk);
         ct.extend_from_slice(&self.tag);
@@ -309,15 +348,34 @@ impl Type2Block {
     ) -> Result<Self> {
         let digits = normalize_rescue_code(rescue_code)?;
         let salt: [u8; 16] = random_array();
-        let (mut key, iterations) = enscrypt_duration(digits.as_bytes(), &salt, log_n, duration_ms, now_ms, progress);
+        let (mut key, iterations) = enscrypt_duration(
+            digits.as_bytes(),
+            &salt,
+            log_n,
+            duration_ms,
+            now_ms,
+            progress,
+        );
         let block = Self::encrypt_with_key(iuk, &key, salt, log_n, iterations);
         key.zeroize();
         Ok(block)
     }
 
     /// Encrypt with a pre-derived key.
-    pub fn encrypt_with_key(iuk: &[u8; 32], key: &[u8; 32], salt: [u8; 16], log_n: u8, iterations: u32) -> Self {
-        let mut block = Self { salt, log_n, iterations, enc_iuk: [0; 32], tag: [0; 16] };
+    pub fn encrypt_with_key(
+        iuk: &[u8; 32],
+        key: &[u8; 32],
+        salt: [u8; 16],
+        log_n: u8,
+        iterations: u32,
+    ) -> Self {
+        let mut block = Self {
+            salt,
+            log_n,
+            iterations,
+            enc_iuk: [0; 32],
+            tag: [0; 16],
+        };
         let ct = aes_gcm_encrypt(key, &ZERO_IV, &block.plaintext(), iuk);
         block.enc_iuk.copy_from_slice(&ct[0..32]);
         block.tag.copy_from_slice(&ct[32..48]);
@@ -328,6 +386,10 @@ impl Type2Block {
 /// Type 3 block: previous IUKs encrypted under the current IMK.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Type3Block {
+    /// The identity's "edition": a counter incremented once per re-keying. It is part of
+    /// the authenticated plaintext, so it can be shown (e.g. on printouts) without the
+    /// password. The number of stored keys is given by the block length, not by this field.
+    pub edition: u16,
     /// Encrypted previous IUKs, most recent first. 1 to 4 entries.
     pub enc_keys: Vec<[u8; 32]>,
     /// AES-GCM authentication tag.
@@ -350,7 +412,7 @@ impl Type3Block {
         let mut v = Vec::with_capacity(TYPE3_PT_LEN);
         v.extend_from_slice(&(self.len() as u16).to_le_bytes());
         v.extend_from_slice(&3u16.to_le_bytes());
-        v.extend_from_slice(&(self.enc_keys.len() as u16).to_le_bytes());
+        v.extend_from_slice(&self.edition.to_le_bytes());
         v
     }
 
@@ -368,20 +430,28 @@ impl Type3Block {
         if b.len() < TYPE3_PT_LEN + 32 + 16 {
             return Err(Error::Format("type 3 block too short".into()));
         }
-        let edition = le_u16(&b[4..6]) as usize;
-        if edition == 0 || edition > MAX_PREVIOUS_KEYS {
-            return Err(Error::Format(format!("type 3 block has unsupported edition count {edition}")));
+        let edition = le_u16(&b[4..6]);
+        if edition == 0 {
+            return Err(Error::Format("type 3 block has edition 0".into()));
         }
-        let expected = TYPE3_PT_LEN + 32 * edition + 16;
-        if b.len() != expected {
-            return Err(Error::Format(format!("type 3 block must be {expected} bytes, got {}", b.len())));
+        let body = b.len() - TYPE3_PT_LEN - 16;
+        if body % 32 != 0 || body == 0 || body / 32 > MAX_PREVIOUS_KEYS {
+            return Err(Error::Format(format!(
+                "type 3 block length {} is not 54, 86, 118 or 150",
+                b.len()
+            )));
         }
-        let mut enc_keys = Vec::with_capacity(edition);
-        for i in 0..edition {
+        let count = body / 32;
+        let mut enc_keys = Vec::with_capacity(count);
+        for i in 0..count {
             let start = TYPE3_PT_LEN + 32 * i;
             enc_keys.push(b[start..start + 32].try_into().unwrap());
         }
-        Ok(Self { enc_keys, tag: b[expected - 16..].try_into().unwrap() })
+        Ok(Self {
+            edition,
+            enc_keys,
+            tag: b[b.len() - 16..].try_into().unwrap(),
+        })
     }
 
     /// Decrypt the previous IUKs with the current IMK.
@@ -398,13 +468,22 @@ impl Type3Block {
         Ok(keys)
     }
 
-    /// Encrypt previous IUKs (most recent first; at most four are kept) under `imk`.
-    pub fn encrypt(previous_iuks: &[[u8; 32]], imk: &[u8; 32]) -> Option<Self> {
-        let keys: Vec<[u8; 32]> = previous_iuks.iter().take(MAX_PREVIOUS_KEYS).copied().collect();
+    /// Encrypt previous IUKs (most recent first; at most four are kept) under `imk`, with the
+    /// given edition number.
+    pub fn encrypt(previous_iuks: &[[u8; 32]], imk: &[u8; 32], edition: u16) -> Option<Self> {
+        let keys: Vec<[u8; 32]> = previous_iuks
+            .iter()
+            .take(MAX_PREVIOUS_KEYS)
+            .copied()
+            .collect();
         if keys.is_empty() {
             return None;
         }
-        let mut block = Self { enc_keys: vec![[0; 32]; keys.len()], tag: [0; 16] };
+        let mut block = Self {
+            edition: edition.max(1),
+            enc_keys: vec![[0; 32]; keys.len()],
+            tag: [0; 16],
+        };
         let mut pt = Vec::with_capacity(32 * keys.len());
         for k in &keys {
             pt.extend_from_slice(k);
@@ -440,7 +519,8 @@ impl S4Identity {
             return Err(Error::Format("identity data too short".into()));
         }
         if &trimmed[..8] == HEADER_TEXT {
-            let text = core::str::from_utf8(&trimmed[8..]).map_err(|_| Error::Format("invalid SQRLDATA text".into()))?;
+            let text = core::str::from_utf8(&trimmed[8..])
+                .map_err(|_| Error::Format("invalid SQRLDATA text".into()))?;
             let body = b64u_decode(text)?;
             return Self::parse_blocks(&body);
         }
@@ -464,9 +544,25 @@ impl S4Identity {
                 return Err(Error::Format("zero-length block".into()));
             }
             if len < 4 || len > data.len() {
-                return Err(Error::Format(format!("block of type {typ} claims {len} bytes but only {} remain", data.len())));
+                return Err(Error::Format(format!(
+                    "block of type {typ} claims {len} bytes but only {} remain",
+                    data.len()
+                )));
             }
             let block = &data[..len];
+            // "Any client encountering an identity containing more than one of either type
+            // should reject the entire identity as suspicious and invalid."
+            let duplicate = match typ {
+                1 => id.type1.is_some(),
+                2 => id.type2.is_some(),
+                3 => id.type3.is_some(),
+                _ => false,
+            };
+            if duplicate {
+                return Err(Error::Format(format!(
+                    "identity contains more than one type {typ} block"
+                )));
+            }
             match typ {
                 1 => id.type1 = Some(Type1Block::parse(block)?),
                 2 => id.type2 = Some(Type2Block::parse(block)?),
@@ -479,7 +575,9 @@ impl S4Identity {
             return Err(Error::Format("trailing garbage after last block".into()));
         }
         if id.type1.is_none() && id.type2.is_none() {
-            return Err(Error::Format("identity contains neither a password nor a rescue block".into()));
+            return Err(Error::Format(
+                "identity contains neither a password nor a rescue block".into(),
+            ));
         }
         Ok(id)
     }
@@ -529,24 +627,47 @@ impl S4Identity {
 
     /// A copy containing only the rescue (type 2) and previous (type 3) blocks.
     pub fn rescue_only(&self) -> Self {
-        Self { type1: None, type2: self.type2.clone(), type3: self.type3.clone(), unknown: Vec::new() }
+        Self {
+            type1: None,
+            type2: self.type2.clone(),
+            type3: self.type3.clone(),
+            unknown: Vec::new(),
+        }
     }
 
     /// Settings from the type 1 block, or defaults.
     pub fn settings(&self) -> IdentitySettings {
-        self.type1.as_ref().map(|b| b.settings.clone()).unwrap_or_default()
+        self.type1
+            .as_ref()
+            .map(|b| b.settings.clone())
+            .unwrap_or_default()
+    }
+
+    /// The identity's edition: 0 for a never re-keyed identity, else the type 3 counter.
+    pub fn edition(&self) -> u16 {
+        self.type3.as_ref().map(|b| b.edition).unwrap_or(0)
     }
 
     /// Derive the password key (slow). `progress(done)` reports completed EnScrypt iterations
     /// out of `type1.iterations`.
-    pub fn derive_password_key(&self, password: &str, progress: impl FnMut(u32)) -> Result<[u8; 32]> {
-        let t1 = self.type1.as_ref().ok_or_else(|| Error::Format("identity has no password block".into()))?;
+    pub fn derive_password_key(
+        &self,
+        password: &str,
+        progress: impl FnMut(u32),
+    ) -> Result<[u8; 32]> {
+        let t1 = self
+            .type1
+            .as_ref()
+            .ok_or_else(|| Error::Format("identity has no password block".into()))?;
         Ok(t1.derive_key(password, progress))
     }
 
     /// Unlock the identity with an already-derived password key.
     pub fn unlock_with_key(&self, key: &[u8; 32]) -> Result<UnlockedIdentity> {
-        let t1 = self.type1.as_ref().ok_or_else(|| Error::Format("identity has no password block".into()))?;
+        let t1 = self
+            .type1
+            .as_ref()
+            .ok_or_else(|| Error::Format("identity has no password block".into()))?;
         let (imk, ilk) = t1.decrypt_with_key(key)?;
         let previous = match &self.type3 {
             Some(t3) => t3.decrypt(&imk)?,
@@ -565,7 +686,10 @@ impl S4Identity {
 
     /// Decrypt the IUK with the rescue code (slow).
     pub fn unlock_iuk(&self, rescue_code: &str, progress: impl FnMut(u32)) -> Result<[u8; 32]> {
-        let t2 = self.type2.as_ref().ok_or_else(|| Error::Format("identity has no rescue code block".into()))?;
+        let t2 = self
+            .type2
+            .as_ref()
+            .ok_or_else(|| Error::Format("identity has no rescue code block".into()))?;
         t2.decrypt(rescue_code, progress)
     }
 
@@ -584,11 +708,30 @@ impl S4Identity {
     ) -> Result<Self> {
         let mut imk = imk_from_iuk(iuk);
         let mut ilk = ilk_from_iuk(iuk);
-        let type1 = Type1Block::encrypt(&imk, &ilk, password, settings.clone(), &mut now_ms, |a, b| progress("password", a, b));
-        let type2 = Type2Block::encrypt(iuk, rescue_code, settings.log_n, rescue_duration_ms, &mut now_ms, |a, b| progress("rescue", a, b))?;
+        let type1 = Type1Block::encrypt(
+            &imk,
+            &ilk,
+            password,
+            settings.clone(),
+            &mut now_ms,
+            |a, b| progress("password", a, b),
+        );
+        let type2 = Type2Block::encrypt(
+            iuk,
+            rescue_code,
+            settings.log_n,
+            rescue_duration_ms,
+            &mut now_ms,
+            |a, b| progress("rescue", a, b),
+        )?;
         imk.zeroize();
         ilk.zeroize();
-        Ok(Self { type1: Some(type1), type2: Some(type2), type3: None, unknown: Vec::new() })
+        Ok(Self {
+            type1: Some(type1),
+            type2: Some(type2),
+            type3: None,
+            unknown: Vec::new(),
+        })
     }
 
     /// Re-encrypt the type 1 (and type 3) blocks for an unlocked identity under a new
@@ -602,8 +745,16 @@ impl S4Identity {
         now_ms: impl FnMut() -> u64,
         progress: impl FnMut(u64, u64),
     ) {
-        self.type1 = Some(Type1Block::encrypt(&identity.imk, &identity.ilk, password, settings, now_ms, progress));
-        self.type3 = Type3Block::encrypt(&identity.previous_iuks, &identity.imk);
+        self.type1 = Some(Type1Block::encrypt(
+            &identity.imk,
+            &identity.ilk,
+            password,
+            settings,
+            now_ms,
+            progress,
+        ));
+        let edition = self.edition().max(identity.previous_iuks.len() as u16);
+        self.type3 = Type3Block::encrypt(&identity.previous_iuks, &identity.imk, edition);
     }
 
     /// Re-key the identity: a new IUK is generated, the old IUK (recovered with the old rescue
@@ -626,16 +777,35 @@ impl S4Identity {
     ) -> Result<UnlockedIdentity> {
         let mut previous = Vec::with_capacity(MAX_PREVIOUS_KEYS);
         previous.push(*old_iuk);
-        for k in old_identity.previous_iuks.iter().take(MAX_PREVIOUS_KEYS - 1) {
+        for k in old_identity
+            .previous_iuks
+            .iter()
+            .take(MAX_PREVIOUS_KEYS - 1)
+        {
             previous.push(*k);
         }
         let mut new_identity = UnlockedIdentity::from_iuk(new_iuk);
         new_identity.previous_iuks = previous;
-        let type1 = Type1Block::encrypt(&new_identity.imk, &new_identity.ilk, new_password, settings.clone(), &mut now_ms, |a, b| progress("password", a, b));
-        let type2 = Type2Block::encrypt(new_iuk, new_rescue_code, settings.log_n, rescue_duration_ms, &mut now_ms, |a, b| progress("rescue", a, b))?;
+        let type1 = Type1Block::encrypt(
+            &new_identity.imk,
+            &new_identity.ilk,
+            new_password,
+            settings.clone(),
+            &mut now_ms,
+            |a, b| progress("password", a, b),
+        );
+        let type2 = Type2Block::encrypt(
+            new_iuk,
+            new_rescue_code,
+            settings.log_n,
+            rescue_duration_ms,
+            &mut now_ms,
+            |a, b| progress("rescue", a, b),
+        )?;
+        let edition = self.edition().saturating_add(1);
         self.type1 = Some(type1);
         self.type2 = Some(type2);
-        self.type3 = Type3Block::encrypt(&new_identity.previous_iuks, &new_identity.imk);
+        self.type3 = Type3Block::encrypt(&new_identity.previous_iuks, &new_identity.imk, edition);
         Ok(new_identity)
     }
 }
@@ -671,7 +841,9 @@ pub fn rescue_code_from_entropy(entropy: &[u8; 32]) -> String {
 /// Strip separators and whitespace from a rescue code and verify it has 24 digits.
 pub fn normalize_rescue_code(code: &str) -> Result<String> {
     let digits: String = code.chars().filter(|c| c.is_ascii_digit()).collect();
-    let non_digits = code.chars().any(|c| !c.is_ascii_digit() && !c.is_ascii_whitespace() && c != '-');
+    let non_digits = code
+        .chars()
+        .any(|c| !c.is_ascii_digit() && !c.is_ascii_whitespace() && c != '-');
     if digits.len() != 24 || non_digits {
         return Err(Error::Format("a rescue code is 24 decimal digits".into()));
     }
@@ -688,8 +860,15 @@ pub fn format_rescue_code(code: &str) -> String {
 }
 
 fn trim_ascii(b: &[u8]) -> &[u8] {
-    let start = b.iter().position(|c| !c.is_ascii_whitespace()).unwrap_or(b.len());
-    let end = b.iter().rposition(|c| !c.is_ascii_whitespace()).map(|i| i + 1).unwrap_or(start);
+    let start = b
+        .iter()
+        .position(|c| !c.is_ascii_whitespace())
+        .unwrap_or(b.len());
+    let end = b
+        .iter()
+        .rposition(|c| !c.is_ascii_whitespace())
+        .map(|i| i + 1)
+        .unwrap_or(start);
     &b[start..end]
 }
 
@@ -735,7 +914,9 @@ mod tests {
         let unlocked = id.unlock("Testing1234", |_| {}).unwrap();
         assert_eq!(unlocked.previous_count(), 0);
         // Decrypting the IUK with the rescue code must reproduce the same IMK and ILK.
-        let iuk = id.unlock_iuk("7276-0587-2230-1119-8559-3839", |_| {}).unwrap();
+        let iuk = id
+            .unlock_iuk("7276-0587-2230-1119-8559-3839", |_| {})
+            .unwrap();
         assert_eq!(enhash(&iuk), unlocked.imk);
         assert_eq!(ilk_from_iuk(&iuk), unlocked.ilk);
     }
@@ -743,7 +924,9 @@ mod tests {
     #[test]
     fn bad_rescue_code_is_rejected() {
         let id = test_identity();
-        assert!(id.unlock_iuk("0000-0000-0000-0000-0000-0000", |_| {}).is_err());
+        assert!(id
+            .unlock_iuk("0000-0000-0000-0000-0000-0000", |_| {})
+            .is_err());
         assert!(id.unlock_iuk("1234", |_| {}).is_err());
     }
 
@@ -761,13 +944,28 @@ mod tests {
         let mut settings = IdentitySettings::default();
         settings.pw_verify_seconds = 1;
         let rescue = "1234-5678-9012-3456-7890-1234";
-        let mut id = S4Identity::create(&iuk, "hunter2", rescue, settings.clone(), 1, fake_clock(), |_, _, _| {}).unwrap();
+        let mut id = S4Identity::create(
+            &iuk,
+            "hunter2",
+            rescue,
+            settings.clone(),
+            1,
+            fake_clock(),
+            |_, _, _| {},
+        )
+        .unwrap();
         let unlocked = id.unlock("hunter2", |_| {}).unwrap();
         assert_eq!(unlocked.imk, imk_from_iuk(&iuk));
         assert_eq!(id.unlock_iuk(rescue, |_| {}).unwrap(), iuk);
 
         // change password
-        id.set_password(&unlocked, "correct horse", settings.clone(), fake_clock(), |_, _| {});
+        id.set_password(
+            &unlocked,
+            "correct horse",
+            settings.clone(),
+            fake_clock(),
+            |_, _| {},
+        );
         assert!(id.unlock("hunter2", |_| {}).is_err());
         let unlocked2 = id.unlock("correct horse", |_| {}).unwrap();
         assert_eq!(unlocked2.imk, unlocked.imk);
@@ -775,7 +973,19 @@ mod tests {
         // rekey
         let new_iuk = [12u8; 32];
         let new_rescue = "0000-1111-2222-3333-4444-5555";
-        let rekeyed = id.rekey(&unlocked2, &iuk, &new_iuk, "pw3", new_rescue, settings.clone(), 1, fake_clock(), |_, _, _| {}).unwrap();
+        let rekeyed = id
+            .rekey(
+                &unlocked2,
+                &iuk,
+                &new_iuk,
+                "pw3",
+                new_rescue,
+                settings.clone(),
+                1,
+                fake_clock(),
+                |_, _, _| {},
+            )
+            .unwrap();
         assert_eq!(rekeyed.previous_iuks, vec![iuk]);
         let reloaded = S4Identity::parse(&id.to_bytes()).unwrap();
         let unlocked3 = reloaded.unlock("pw3", |_| {}).unwrap();
@@ -789,7 +999,19 @@ mod tests {
         let mut cur_unlocked = unlocked3;
         for i in 20u8..24 {
             let next = [i; 32];
-            cur_unlocked = id.rekey(&cur_unlocked, &cur_iuk, &next, "pw", new_rescue, settings.clone(), 1, fake_clock(), |_, _, _| {}).unwrap();
+            cur_unlocked = id
+                .rekey(
+                    &cur_unlocked,
+                    &cur_iuk,
+                    &next,
+                    "pw",
+                    new_rescue,
+                    settings.clone(),
+                    1,
+                    fake_clock(),
+                    |_, _, _| {},
+                )
+                .unwrap();
             cur_iuk = next;
         }
         assert_eq!(cur_unlocked.previous_iuks.len(), 4);
@@ -797,7 +1019,41 @@ mod tests {
         assert_eq!(cur_unlocked.previous_iuks[3], [new_iuk[0]; 32]);
         let reloaded = S4Identity::parse(&id.to_bytes()).unwrap();
         assert_eq!(reloaded.type3.as_ref().unwrap().len(), 150);
-        assert_eq!(reloaded.unlock("pw", |_| {}).unwrap().previous_iuks, cur_unlocked.previous_iuks);
+        assert_eq!(
+            reloaded.unlock("pw", |_| {}).unwrap().previous_iuks,
+            cur_unlocked.previous_iuks
+        );
+        // five re-keyings in total: the edition keeps counting past the four stored keys
+        assert_eq!(reloaded.edition(), 5);
+    }
+
+    #[test]
+    fn duplicate_blocks_are_rejected() {
+        let id = test_identity();
+        let mut bytes = id.to_bytes();
+        let t2 = id.type2.as_ref().unwrap().to_bytes();
+        bytes.extend_from_slice(&t2);
+        assert!(S4Identity::parse(&bytes).is_err());
+    }
+
+    #[test]
+    fn password_is_nfkc_normalized() {
+        // U+FB01 (ﬁ ligature) normalizes to "fi"; U+212B (Å angstrom sign) to U+00C5.
+        assert_eq!(normalize_password("\u{FB01}sh \u{212B}"), "fish \u{C5}");
+        let iuk = [3u8; 32];
+        let mut settings = IdentitySettings::default();
+        settings.pw_verify_seconds = 1;
+        let id = S4Identity::create(
+            &iuk,
+            "\u{FB01}sh",
+            "1234-5678-9012-3456-7890-1234",
+            settings,
+            1,
+            fake_clock(),
+            |_, _, _| {},
+        )
+        .unwrap();
+        assert!(id.unlock("fish", |_| {}).is_ok());
     }
 
     #[test]
@@ -815,13 +1071,22 @@ mod tests {
         let code = generate_rescue_code();
         assert_eq!(code.len(), 24);
         assert!(code.chars().all(|c| c.is_ascii_digit()));
-        assert_eq!(rescue_code_from_entropy(&[0u8; 32]), "000000000000000000000000");
+        assert_eq!(
+            rescue_code_from_entropy(&[0u8; 32]),
+            "000000000000000000000000"
+        );
         // 2^256 mod 10^24, with digits least-significant first.
         let mut e = [0u8; 32];
         e[31] = 1;
         assert_eq!(rescue_code_from_entropy(&e), "100000000000000000000000");
-        assert_eq!(format_rescue_code("123456789012345678901234"), "1234-5678-9012-3456-7890-1234");
-        assert_eq!(normalize_rescue_code(" 1234-5678 9012-3456-7890-1234 ").unwrap(), "123456789012345678901234");
+        assert_eq!(
+            format_rescue_code("123456789012345678901234"),
+            "1234-5678-9012-3456-7890-1234"
+        );
+        assert_eq!(
+            normalize_rescue_code(" 1234-5678 9012-3456-7890-1234 ").unwrap(),
+            "123456789012345678901234"
+        );
         assert!(normalize_rescue_code("1234-5678-9012-3456-7890-12x4").is_err());
     }
 }

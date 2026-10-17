@@ -93,7 +93,11 @@ impl core::fmt::Debug for UnlockedIdentity {
 impl UnlockedIdentity {
     /// Build from master and lock keys plus any previous unlock keys.
     pub fn new(imk: [u8; 32], ilk: [u8; 32], previous_iuks: Vec<[u8; 32]>) -> Self {
-        Self { imk, ilk, previous_iuks }
+        Self {
+            imk,
+            ilk,
+            previous_iuks,
+        }
     }
 
     /// Build a brand-new identity from an Identity Unlock Key.
@@ -176,9 +180,18 @@ mod tests {
     fn site_keys_differ_per_site_and_identity() {
         let a = UnlockedIdentity::from_iuk(&[1u8; 32]);
         let b = UnlockedIdentity::from_iuk(&[2u8; 32]);
-        assert_ne!(a.site_public_key(b"example.com"), a.site_public_key(b"example.org"));
-        assert_ne!(a.site_public_key(b"example.com"), b.site_public_key(b"example.com"));
-        assert_eq!(a.site_public_key(b"example.com"), a.site_public_key(b"example.com"));
+        assert_ne!(
+            a.site_public_key(b"example.com"),
+            a.site_public_key(b"example.org")
+        );
+        assert_ne!(
+            a.site_public_key(b"example.com"),
+            b.site_public_key(b"example.com")
+        );
+        assert_eq!(
+            a.site_public_key(b"example.com"),
+            a.site_public_key(b"example.com")
+        );
     }
 
     #[test]

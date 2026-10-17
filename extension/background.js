@@ -21,12 +21,14 @@ const QUICKPASS_ALARM = 'sqrl-quickpass-expire';
 async function installRules() {
   const base = api.runtime.getURL('');
   const rules = [
+    // Both schemes are matched: on HSTS sites Chrome upgrades the probe to https://localhost
+    // (grc.sqrl #23175), and a native client would never answer that, but we can.
     {
       id: RULE_PROBE,
       priority: 2,
       action: { type: 'redirect', redirect: { url: base + 'img/cps.gif' } },
       condition: {
-        regexFilter: `^http://localhost:${CPS_PORT}/[^?#]*\\.gif(\\?.*)?$`,
+        regexFilter: `^https?://(localhost|127\\.0\\.0\\.1):${CPS_PORT}/[^?#]*\\.gif(\\?.*)?$`,
         resourceTypes: ['image', 'xmlhttprequest', 'other']
       }
     },
@@ -35,10 +37,10 @@ async function installRules() {
       priority: 1,
       action: {
         type: 'redirect',
-        redirect: { regexSubstitution: base + 'auth.html?cps=\\1' }
+        redirect: { regexSubstitution: base + 'auth.html?cps=\\2' }
       },
       condition: {
-        regexFilter: `^http://localhost:${CPS_PORT}/([A-Za-z0-9_=-]+)`,
+        regexFilter: `^https?://(localhost|127\\.0\\.0\\.1):${CPS_PORT}/([A-Za-z0-9_=-]+)`,
         resourceTypes: ['main_frame']
       }
     }

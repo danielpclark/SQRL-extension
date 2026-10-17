@@ -7,7 +7,9 @@
 //! used by the crate's flow tests and by the `sqrl-test-server` binary.
 
 use crate::crypto::ed25519_verify;
-use crate::protocol::{parse_pairs, version_supported, Ask, ClientOptions, Command, Tif, PROTOCOL_VERSION};
+use crate::protocol::{
+    parse_pairs, version_supported, Ask, ClientOptions, Command, Tif, PROTOCOL_VERSION,
+};
 use crate::util::{b64u_decode, b64u_decode_array, b64u_encode, random_array};
 use std::collections::{HashMap, HashSet};
 
@@ -120,9 +122,16 @@ impl ReferenceServer {
         }
         self.nuts.insert(
             nut,
-            NutRecord { session: session.clone(), expected_server: b64u_encode(url.as_bytes()), ip: ip.to_string(), bound_idk: None, used: false },
+            NutRecord {
+                session: session.clone(),
+                expected_server: b64u_encode(url.as_bytes()),
+                ip: ip.to_string(),
+                bound_idk: None,
+                used: false,
+            },
         );
-        self.sessions.insert(session.clone(), BrowserSession::default());
+        self.sessions
+            .insert(session.clone(), BrowserSession::default());
         (session, url)
     }
 
@@ -161,7 +170,8 @@ impl ReferenceServer {
                 // anonymous session so the client can retry.
                 tif.0 |= Tif::TRANSIENT_ERROR | Tif::COMMAND_FAILED;
                 let session = format!("s{}", self.new_nut());
-                self.sessions.insert(session.clone(), BrowserSession::default());
+                self.sessions
+                    .insert(session.clone(), BrowserSession::default());
                 return self.respond(tif, &session, ip.to_string(), None, extra);
             }
         };
@@ -182,7 +192,10 @@ impl ReferenceServer {
             tif.0 |= Tif::CLIENT_FAILURE | Tif::COMMAND_FAILED;
             return self.respond(tif, &session, record.ip, record.bound_idk, extra);
         }
-        let client_text = match b64u_decode(&client_b64).ok().and_then(|b| String::from_utf8(b).ok()) {
+        let client_text = match b64u_decode(&client_b64)
+            .ok()
+            .and_then(|b| String::from_utf8(b).ok())
+        {
             Some(t) => t,
             None => {
                 tif.0 |= Tif::CLIENT_FAILURE | Tif::COMMAND_FAILED;
@@ -192,7 +205,9 @@ impl ReferenceServer {
         let params = parse_pairs(&client_text);
         let cget = |k: &str| params.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
 
-        let ver_ok = cget("ver").map(|v| version_supported(&v, PROTOCOL_VERSION)).unwrap_or(false);
+        let ver_ok = cget("ver")
+            .map(|v| version_supported(&v, PROTOCOL_VERSION))
+            .unwrap_or(false);
         let cmd = cget("cmd").and_then(|c| Command::parse(&c));
         let idk = cget("idk").and_then(|v| b64u_decode_array::<32>(&v).ok());
         let (cmd, idk) = match (ver_ok, cmd, idk) {
@@ -234,7 +249,9 @@ impl ReferenceServer {
                 return self.respond(tif, &session, record.ip, Some(bound), extra);
             }
         }
-        let opts = cget("opt").map(|o| ClientOptions::from_wire(&o)).unwrap_or_default();
+        let opts = cget("opt")
+            .map(|o| ClientOptions::from_wire(&o))
+            .unwrap_or_default();
         if record.ip == ip {
             tif.0 |= Tif::IPS_MATCHED;
         } else if !opts.noiptest && !self.ignore_ip {
@@ -249,14 +266,23 @@ impl ReferenceServer {
 
         // --- which identity does the server know? ----------------------------------------
         let mut id_match = self.accounts.contains_key(&idk);
-        let prev_match = !id_match && pidk.map(|p| self.accounts.contains_key(&p)).unwrap_or(false);
+        let prev_match = !id_match
+            && pidk
+                .map(|p| self.accounts.contains_key(&p))
+                .unwrap_or(false);
         if id_match {
             tif.0 |= Tif::ID_MATCH;
         }
         if prev_match {
             tif.0 |= Tif::PREVIOUS_ID_MATCH;
         }
-        let matched_key = if id_match { Some(idk) } else if prev_match { pidk } else { None };
+        let matched_key = if id_match {
+            Some(idk)
+        } else if prev_match {
+            pidk
+        } else {
+            None
+        };
         if let Some(k) = matched_key {
             if self.accounts[&k].disabled {
                 tif.0 |= Tif::SQRL_DISABLED;
@@ -287,10 +313,19 @@ impl ReferenceServer {
         let mut rekey_failed = false;
         if prev_match && cmd != Command::Query {
             let old = pidk.unwrap();
-            match (suk_b64.as_deref().and_then(|s| b64u_decode_array::<32>(s).ok()), vuk_b64.as_deref().and_then(|s| b64u_decode_array::<32>(s).ok())) {
+            match (
+                suk_b64
+                    .as_deref()
+                    .and_then(|s| b64u_decode_array::<32>(s).ok()),
+                vuk_b64
+                    .as_deref()
+                    .and_then(|s| b64u_decode_array::<32>(s).ok()),
+            ) {
                 (Some(new_suk), Some(new_vuk))
                     if urs_ok(&self.accounts[&old].vuk)
-                        && (self.sin.is_none() || self.accounts[&old].ins.is_none() || self.accounts[&old].ins == cget("pins")) =>
+                        && (self.sin.is_none()
+                            || self.accounts[&old].ins.is_none()
+                            || self.accounts[&old].ins == cget("pins")) =>
                 {
                     let mut acct = self.accounts.remove(&old).unwrap();
                     acct.idk = idk;
@@ -317,7 +352,8 @@ impl ReferenceServer {
                         suk_to_return = Some(a.suk);
                     }
                 }
-                if ask_pending {
+                // An ask is only valid in a query reply that recognises the current identity.
+                if ask_pending && id_match {
                     extra.push(("ask".into(), self.ask.as_ref().unwrap().to_wire()));
                     self.sessions.get_mut(&session).unwrap().asked = true;
                 }
@@ -334,31 +370,61 @@ impl ReferenceServer {
                         a.hardlock = opts.hardlock;
                         if self.sin.is_some() {
                             match cget("ins") {
-                                Some(ins) if a.ins.as_deref().map(|x| x == ins).unwrap_or(true) => a.ins = Some(ins),
+                                Some(ins) if a.ins.as_deref().map(|x| x == ins).unwrap_or(true) => {
+                                    a.ins = Some(ins)
+                                }
                                 _ => {
                                     tif.0 |= Tif::COMMAND_FAILED;
-                                    return self.respond(tif, &session, record.ip, Some(idk), extra);
+                                    return self.respond(
+                                        tif,
+                                        &session,
+                                        record.ip,
+                                        Some(idk),
+                                        extra,
+                                    );
                                 }
                             }
                         }
                         a.logins += 1;
                         self.sessions.get_mut(&session).unwrap().authenticated = Some(idk);
                         if opts.cps {
-                            extra.push(("url".into(), format!("{}{}", self.cps_url_prefix, session)));
+                            extra.push((
+                                "url".into(),
+                                format!("{}{}", self.cps_url_prefix, session),
+                            ));
                         }
                     }
                 } else {
                     // new account
-                    match (suk_b64.as_deref().and_then(|s| b64u_decode_array::<32>(s).ok()), vuk_b64.as_deref().and_then(|s| b64u_decode_array::<32>(s).ok())) {
+                    match (
+                        suk_b64
+                            .as_deref()
+                            .and_then(|s| b64u_decode_array::<32>(s).ok()),
+                        vuk_b64
+                            .as_deref()
+                            .and_then(|s| b64u_decode_array::<32>(s).ok()),
+                    ) {
                         (Some(suk), Some(vuk)) => {
                             self.accounts.insert(
                                 idk,
-                                Account { idk, suk, vuk, disabled: false, sqrlonly: opts.sqrlonly, hardlock: opts.hardlock, ins: cget("ins"), logins: 1 },
+                                Account {
+                                    idk,
+                                    suk,
+                                    vuk,
+                                    disabled: false,
+                                    sqrlonly: opts.sqrlonly,
+                                    hardlock: opts.hardlock,
+                                    ins: cget("ins"),
+                                    logins: 1,
+                                },
                             );
                             tif.0 |= Tif::ID_MATCH;
                             self.sessions.get_mut(&session).unwrap().authenticated = Some(idk);
                             if opts.cps {
-                                extra.push(("url".into(), format!("{}{}", self.cps_url_prefix, session)));
+                                extra.push((
+                                    "url".into(),
+                                    format!("{}{}", self.cps_url_prefix, session),
+                                ));
                             }
                         }
                         _ => tif.0 |= Tif::COMMAND_FAILED | Tif::CLIENT_FAILURE,
@@ -386,7 +452,10 @@ impl ReferenceServer {
                         a.logins += 1;
                         self.sessions.get_mut(&session).unwrap().authenticated = Some(idk);
                         if opts.cps {
-                            extra.push(("url".into(), format!("{}{}", self.cps_url_prefix, session)));
+                            extra.push((
+                                "url".into(),
+                                format!("{}{}", self.cps_url_prefix, session),
+                            ));
                         }
                     } else {
                         tif.0 |= Tif::COMMAND_FAILED | Tif::CLIENT_FAILURE;
@@ -402,7 +471,10 @@ impl ReferenceServer {
                         self.accounts.remove(&idk);
                         tif.0 &= !(Tif::ID_MATCH | Tif::SQRL_DISABLED);
                         if opts.cps {
-                            extra.push(("url".into(), format!("{}{}", self.cps_url_prefix, session)));
+                            extra.push((
+                                "url".into(),
+                                format!("{}{}", self.cps_url_prefix, session),
+                            ));
                         }
                     } else {
                         tif.0 |= Tif::COMMAND_FAILED | Tif::CLIENT_FAILURE;
@@ -417,9 +489,20 @@ impl ReferenceServer {
         self.respond(tif, &session, record.ip, Some(idk), extra)
     }
 
-    fn respond(&mut self, tif: Tif, session: &str, ip: String, bound_idk: Option<[u8; 32]>, extra: Vec<(String, String)>) -> String {
+    fn respond(
+        &mut self,
+        tif: Tif,
+        session: &str,
+        ip: String,
+        bound_idk: Option<[u8; 32]>,
+        extra: Vec<(String, String)>,
+    ) -> String {
         let nut = self.new_nut();
-        let mut text = format!("ver=1\r\nnut={nut}\r\ntif={}\r\nqry={}?nut={nut}\r\n", tif.to_hex(), self.path);
+        let mut text = format!(
+            "ver=1\r\nnut={nut}\r\ntif={}\r\nqry={}?nut={nut}\r\n",
+            tif.to_hex(),
+            self.path
+        );
         if let Some(sin) = &self.sin {
             text.push_str(&format!("sin={sin}\r\n"));
         }
@@ -429,7 +512,13 @@ impl ReferenceServer {
         let body = b64u_encode(text.as_bytes());
         self.nuts.insert(
             nut,
-            NutRecord { session: session.to_string(), expected_server: body.clone(), ip, bound_idk, used: false },
+            NutRecord {
+                session: session.to_string(),
+                expected_server: body.clone(),
+                ip,
+                bound_idk,
+                used: false,
+            },
         );
         body
     }

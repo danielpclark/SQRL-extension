@@ -54,7 +54,11 @@ pub fn encode(data: &[u8]) -> String {
             line_chars.clear();
             line = line.wrapping_add(1);
         }
-        let c = if num.iter().all(|b| *b == 0) { ALPHABET[0] } else { ALPHABET[divmod56(&mut num) as usize] };
+        let c = if num.iter().all(|b| *b == 0) {
+            ALPHABET[0]
+        } else {
+            ALPHABET[divmod56(&mut num) as usize]
+        };
         out.push(c);
         line_chars.push(c);
     }
@@ -93,7 +97,10 @@ pub fn decode(text: &str) -> Result<Vec<u8>> {
     // Every character must be from the alphabet (this also catches 0, 1, I, O, l, o typos).
     for &c in &cleaned {
         if alphabet_index(c).is_none() {
-            return Err(Error::Format(format!("invalid character '{}' in textual identity", c as char)));
+            return Err(Error::Format(format!(
+                "invalid character '{}' in textual identity",
+                c as char
+            )));
         }
     }
     // Split into data characters and check characters: every 20th char (and the final char)
@@ -106,7 +113,10 @@ pub fn decode(text: &str) -> Result<Vec<u8>> {
         let is_check = line_chars.len() == CHARS_PER_LINE || i == total - 1;
         if is_check {
             if c != check_char(&line_chars, line) {
-                return Err(Error::Format(format!("check character mismatch on line {}", line as usize + 1)));
+                return Err(Error::Format(format!(
+                    "check character mismatch on line {}",
+                    line as usize + 1
+                )));
             }
             line_chars.clear();
             line = line.wrapping_add(1);
@@ -160,7 +170,11 @@ mod tests {
             let mut data = vec![0u8; len];
             random_bytes(&mut data);
             let enc = encode(&data);
-            assert_eq!(enc.len(), ((len * 8) as f64 / LOG2_56).ceil() as usize + (((len * 8) as f64 / LOG2_56).ceil() as usize).div_ceil(19));
+            assert_eq!(
+                enc.len(),
+                ((len * 8) as f64 / LOG2_56).ceil() as usize
+                    + (((len * 8) as f64 / LOG2_56).ceil() as usize).div_ceil(19)
+            );
             let dec = decode(&enc).unwrap();
             assert_eq!(dec, data, "len {len}");
             let shown = format_for_display(&enc);

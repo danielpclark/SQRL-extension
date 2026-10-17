@@ -18,7 +18,9 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 
 fn main() {
-    let addr = std::env::args().nth(1).unwrap_or_else(|| "127.0.0.1:8080".to_string());
+    let addr = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "127.0.0.1:8080".to_string());
     let host = std::env::args().nth(2).unwrap_or_else(|| {
         let port = addr.rsplit(':').next().unwrap_or("8080");
         format!("localhost:{port}")
@@ -31,8 +33,14 @@ fn main() {
         server.ask = Some(sqrl_core::protocol::Ask {
             message: "Allow this login from the test server?".into(),
             buttons: vec![
-                sqrl_core::protocol::AskButton { label: "Allow".into(), url: None },
-                sqrl_core::protocol::AskButton { label: "Deny".into(), url: None },
+                sqrl_core::protocol::AskButton {
+                    label: "Allow".into(),
+                    url: None,
+                },
+                sqrl_core::protocol::AskButton {
+                    label: "Deny".into(),
+                    url: None,
+                },
             ],
         });
     }
@@ -49,7 +57,10 @@ fn main() {
 }
 
 fn handle(mut stream: TcpStream, state: Arc<Mutex<ReferenceServer>>) {
-    let peer = stream.peer_addr().map(|a| a.ip().to_string()).unwrap_or_default();
+    let peer = stream
+        .peer_addr()
+        .map(|a| a.ip().to_string())
+        .unwrap_or_default();
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     let mut request_line = String::new();
     if reader.read_line(&mut request_line).is_err() || request_line.is_empty() {
@@ -61,7 +72,8 @@ fn handle(mut stream: TcpStream, state: Arc<Mutex<ReferenceServer>>) {
     let mut content_length = 0usize;
     loop {
         let mut line = String::new();
-        if reader.read_line(&mut line).is_err() || line == "\r\n" || line == "\n" || line.is_empty() {
+        if reader.read_line(&mut line).is_err() || line == "\r\n" || line == "\n" || line.is_empty()
+        {
             break;
         }
         if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
@@ -73,7 +85,10 @@ fn handle(mut stream: TcpStream, state: Arc<Mutex<ReferenceServer>>) {
         let _ = reader.read_exact(&mut body);
     }
     let body = String::from_utf8_lossy(&body).to_string();
-    let (path, query) = target.split_once('?').map(|(p, q)| (p.to_string(), q.to_string())).unwrap_or((target.clone(), String::new()));
+    let (path, query) = target
+        .split_once('?')
+        .map(|(p, q)| (p.to_string(), q.to_string()))
+        .unwrap_or((target.clone(), String::new()));
     let params = query_pairs(&query);
     let param = |k: &str| params.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
 
@@ -87,14 +102,28 @@ fn handle(mut stream: TcpStream, state: Arc<Mutex<ReferenceServer>>) {
             let nut = param("nut").unwrap_or_default();
             let mut s = state.lock().unwrap();
             let resp = s.handle(&nut, &body, &peer);
-            eprintln!("[cli] nut={nut} -> {}", String::from_utf8_lossy(&sqrl_core::util::b64u_decode(&resp).unwrap_or_default()).replace("\r\n", " | "));
+            eprintln!(
+                "[cli] nut={nut} -> {}",
+                String::from_utf8_lossy(&sqrl_core::util::b64u_decode(&resp).unwrap_or_default())
+                    .replace("\r\n", " | ")
+            );
             ("200 OK", "text/plain", resp)
         }
         ("GET", "/status") => {
             let session = param("session").unwrap_or_default();
             let s = state.lock().unwrap();
-            let auth = s.session(&session).and_then(|b| b.authenticated).map(|k| b64u_encode(&k));
-            ("200 OK", "application/json", format!("{{\"authenticated\":{}}}", auth.map(|a| format!("\"{a}\"")).unwrap_or("null".into())))
+            let auth = s
+                .session(&session)
+                .and_then(|b| b.authenticated)
+                .map(|k| b64u_encode(&k));
+            (
+                "200 OK",
+                "application/json",
+                format!(
+                    "{{\"authenticated\":{}}}",
+                    auth.map(|a| format!("\"{a}\"")).unwrap_or("null".into())
+                ),
+            )
         }
         ("GET", "/loggedin") => {
             let session = param("session").unwrap_or_default();

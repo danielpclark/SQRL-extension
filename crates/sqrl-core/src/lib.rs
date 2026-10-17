@@ -38,9 +38,6 @@ pub use protocol::{ClientOptions, Command, ServerResponse, Session, Tif};
 pub use storage::S4Identity;
 pub use url::SqrlUrl;
 
-
-
-
 /// Error type used throughout the crate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Error {

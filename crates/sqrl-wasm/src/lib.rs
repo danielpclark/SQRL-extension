@@ -11,7 +11,8 @@ use sqrl_core::crypto::{aes_gcm_decrypt, aes_gcm_encrypt, enscrypt_duration, ens
 use sqrl_core::identity::UnlockedIdentity;
 use sqrl_core::protocol::{ClientOptions, Request, SessionState};
 use sqrl_core::storage::{
-    format_rescue_code, generate_rescue_code, normalize_rescue_code, IdentitySettings, S4Identity,
+    format_rescue_code, generate_rescue_code, normalize_password, normalize_rescue_code,
+    IdentitySettings, S4Identity,
 };
 use sqrl_core::url::SqrlUrl;
 use sqrl_core::util::{b64u_decode, b64u_encode, random_array, random_bytes};
@@ -60,8 +61,16 @@ impl From<SettingsJson> for IdentitySettings {
         let d = IdentitySettings::default();
         Self {
             option_flags: s.option_flags,
-            hint_length: if s.hint_length == 0 { d.hint_length } else { s.hint_length },
-            pw_verify_seconds: if s.pw_verify_seconds == 0 { d.pw_verify_seconds } else { s.pw_verify_seconds },
+            hint_length: if s.hint_length == 0 {
+                d.hint_length
+            } else {
+                s.hint_length
+            },
+            pw_verify_seconds: if s.pw_verify_seconds == 0 {
+                d.pw_verify_seconds
+            } else {
+                s.pw_verify_seconds
+            },
             idle_timeout_minutes: s.idle_timeout_minutes,
             log_n: if s.log_n == 0 { d.log_n } else { s.log_n },
         }
@@ -99,7 +108,9 @@ pub fn generate_rescue_code_js() -> String {
 /// `1234-5678-...` formatting.
 #[wasm_bindgen(js_name = formatRescueCode)]
 pub fn format_rescue_code_js(code: &str) -> Result<String, JsValue> {
-    Ok(format_rescue_code(&normalize_rescue_code(code).map_err(js_err)?))
+    Ok(format_rescue_code(
+        &normalize_rescue_code(code).map_err(js_err)?,
+    ))
 }
 
 /// base64url encode.
@@ -159,20 +170,26 @@ impl SqrlIdentityFile {
     /// Parse binary (`sqrldata`) or textual (`SQRLDATA...`) identity data.
     #[wasm_bindgen]
     pub fn parse(data: &[u8]) -> Result<SqrlIdentityFile, JsValue> {
-        Ok(Self { inner: S4Identity::parse(data).map_err(js_err)? })
+        Ok(Self {
+            inner: S4Identity::parse(data).map_err(js_err)?,
+        })
     }
 
     /// Parse a textual `SQRLDATA...` string.
     #[wasm_bindgen(js_name = parseText)]
     pub fn parse_text(text: &str) -> Result<SqrlIdentityFile, JsValue> {
-        Ok(Self { inner: S4Identity::parse(text.as_bytes()).map_err(js_err)? })
+        Ok(Self {
+            inner: S4Identity::parse(text.as_bytes()).map_err(js_err)?,
+        })
     }
 
     /// Parse a base56 textual identity (rescue blocks only).
     #[wasm_bindgen(js_name = parseTextual)]
     pub fn parse_textual(text: &str) -> Result<SqrlIdentityFile, JsValue> {
         let bytes = textual::decode(text).map_err(js_err)?;
-        Ok(Self { inner: S4Identity::parse_blocks(&bytes).map_err(js_err)? })
+        Ok(Self {
+            inner: S4Identity::parse_blocks(&bytes).map_err(js_err)?,
+        })
     }
 
     /// Binary file bytes.
@@ -224,7 +241,17 @@ impl SqrlIdentityFile {
     /// Number of previous identities stored.
     #[wasm_bindgen(js_name = previousCount)]
     pub fn previous_count(&self) -> usize {
-        self.inner.type3.as_ref().map(|t| t.enc_keys.len()).unwrap_or(0)
+        self.inner
+            .type3
+            .as_ref()
+            .map(|t| t.enc_keys.len())
+            .unwrap_or(0)
+    }
+
+    /// Edition (re-key counter), 0 if never re-keyed.
+    #[wasm_bindgen]
+    pub fn edition(&self) -> u16 {
+        self.inner.edition()
     }
 
     /// Settings JSON.
@@ -241,11 +268,17 @@ impl SqrlIdentityFile {
 
     /// Derive the password key (slow). `progress(done, total)`.
     #[wasm_bindgen(js_name = deriveKey)]
-    pub fn derive_key(&self, password: &str, progress: Option<Function>) -> Result<Vec<u8>, JsValue> {
+    pub fn derive_key(
+        &self,
+        password: &str,
+        progress: Option<Function>,
+    ) -> Result<Vec<u8>, JsValue> {
         let total = self.password_iterations() as f64;
         let key = self
             .inner
-            .derive_password_key(password, |done| call_progress(&progress, done as f64, total))
+            .derive_password_key(password, |done| {
+                call_progress(&progress, done as f64, total)
+            })
             .map_err(js_err)?;
         Ok(key.to_vec())
     }
@@ -261,22 +294,34 @@ impl SqrlIdentityFile {
 
     /// Unlock with the password (slow).
     #[wasm_bindgen]
-    pub fn unlock(&self, password: &str, progress: Option<Function>) -> Result<SqrlUnlocked, JsValue> {
+    pub fn unlock(
+        &self,
+        password: &str,
+        progress: Option<Function>,
+    ) -> Result<SqrlUnlocked, JsValue> {
         let total = self.password_iterations() as f64;
         let id = self
             .inner
-            .unlock(password, |done| call_progress(&progress, done as f64, total))
+            .unlock(password, |done| {
+                call_progress(&progress, done as f64, total)
+            })
             .map_err(js_err)?;
         Ok(SqrlUnlocked { inner: id })
     }
 
     /// Decrypt the IUK with the rescue code (slow).
     #[wasm_bindgen(js_name = unlockIuk)]
-    pub fn unlock_iuk(&self, rescue_code: &str, progress: Option<Function>) -> Result<Vec<u8>, JsValue> {
+    pub fn unlock_iuk(
+        &self,
+        rescue_code: &str,
+        progress: Option<Function>,
+    ) -> Result<Vec<u8>, JsValue> {
         let total = self.inner.type2.as_ref().map(|t| t.iterations).unwrap_or(0) as f64;
         let iuk = self
             .inner
-            .unlock_iuk(rescue_code, |done| call_progress(&progress, done as f64, total))
+            .unlock_iuk(rescue_code, |done| {
+                call_progress(&progress, done as f64, total)
+            })
             .map_err(js_err)?;
         Ok(iuk.to_vec())
     }
@@ -292,20 +337,44 @@ impl SqrlIdentityFile {
     ) -> Result<SqrlIdentityFile, JsValue> {
         let settings = parse_settings(settings_json)?;
         let mut iuk: [u8; 32] = random_array();
-        let r = S4Identity::create(&iuk, password, rescue_code, settings, rescue_duration_ms as u64, now_ms, |stage, a, b| {
-            if let Some(f) = &progress {
-                let _ = f.call3(&JsValue::NULL, &JsValue::from_str(stage), &JsValue::from_f64(a as f64), &JsValue::from_f64(b as f64));
-            }
-        });
+        let r = S4Identity::create(
+            &iuk,
+            password,
+            rescue_code,
+            settings,
+            rescue_duration_ms as u64,
+            now_ms,
+            |stage, a, b| {
+                if let Some(f) = &progress {
+                    let _ = f.call3(
+                        &JsValue::NULL,
+                        &JsValue::from_str(stage),
+                        &JsValue::from_f64(a as f64),
+                        &JsValue::from_f64(b as f64),
+                    );
+                }
+            },
+        );
         iuk.zeroize();
-        Ok(Self { inner: r.map_err(js_err)? })
+        Ok(Self {
+            inner: r.map_err(js_err)?,
+        })
     }
 
     /// Re-encrypt under a new password and/or new settings. `progress(elapsedMs, totalMs)`.
     #[wasm_bindgen(js_name = setPassword)]
-    pub fn set_password(&mut self, unlocked: &SqrlUnlocked, password: &str, settings_json: &str, progress: Option<Function>) -> Result<(), JsValue> {
+    pub fn set_password(
+        &mut self,
+        unlocked: &SqrlUnlocked,
+        password: &str,
+        settings_json: &str,
+        progress: Option<Function>,
+    ) -> Result<(), JsValue> {
         let settings = parse_settings(settings_json)?;
-        self.inner.set_password(&unlocked.inner, password, settings, now_ms, |a, b| call_progress(&progress, a as f64, b as f64));
+        self.inner
+            .set_password(&unlocked.inner, password, settings, now_ms, |a, b| {
+                call_progress(&progress, a as f64, b as f64)
+            });
         Ok(())
     }
 
@@ -323,24 +392,51 @@ impl SqrlIdentityFile {
         progress: Option<Function>,
     ) -> Result<SqrlUnlocked, JsValue> {
         let settings = parse_settings(settings_json)?;
-        let old: [u8; 32] = old_iuk.try_into().map_err(|_| js_err("iuk must be 32 bytes"))?;
+        let old: [u8; 32] = old_iuk
+            .try_into()
+            .map_err(|_| js_err("iuk must be 32 bytes"))?;
         let mut new_iuk: [u8; 32] = random_array();
-        let r = self.inner.rekey(&unlocked.inner, &old, &new_iuk, new_password, new_rescue_code, settings, rescue_duration_ms as u64, now_ms, |stage, a, b| {
-            if let Some(f) = &progress {
-                let _ = f.call3(&JsValue::NULL, &JsValue::from_str(stage), &JsValue::from_f64(a as f64), &JsValue::from_f64(b as f64));
-            }
-        });
+        let r = self.inner.rekey(
+            &unlocked.inner,
+            &old,
+            &new_iuk,
+            new_password,
+            new_rescue_code,
+            settings,
+            rescue_duration_ms as u64,
+            now_ms,
+            |stage, a, b| {
+                if let Some(f) = &progress {
+                    let _ = f.call3(
+                        &JsValue::NULL,
+                        &JsValue::from_str(stage),
+                        &JsValue::from_f64(a as f64),
+                        &JsValue::from_f64(b as f64),
+                    );
+                }
+            },
+        );
         new_iuk.zeroize();
-        Ok(SqrlUnlocked { inner: r.map_err(js_err)? })
+        Ok(SqrlUnlocked {
+            inner: r.map_err(js_err)?,
+        })
     }
 
     /// Build an identity file from an IUK (e.g. after importing a rescue-only identity), with
     /// a fresh password block and the given previous IUKs.
     #[wasm_bindgen(js_name = fromUnlocked)]
-    pub fn from_unlocked(unlocked: &SqrlUnlocked, rescue_block_source: &SqrlIdentityFile, password: &str, settings_json: &str, progress: Option<Function>) -> Result<SqrlIdentityFile, JsValue> {
+    pub fn from_unlocked(
+        unlocked: &SqrlUnlocked,
+        rescue_block_source: &SqrlIdentityFile,
+        password: &str,
+        settings_json: &str,
+        progress: Option<Function>,
+    ) -> Result<SqrlIdentityFile, JsValue> {
         let settings = parse_settings(settings_json)?;
         let mut inner = rescue_block_source.inner.rescue_only();
-        inner.set_password(&unlocked.inner, password, settings, now_ms, |a, b| call_progress(&progress, a as f64, b as f64));
+        inner.set_password(&unlocked.inner, password, settings, now_ms, |a, b| {
+            call_progress(&progress, a as f64, b as f64)
+        });
         Ok(Self { inner })
     }
 }
@@ -422,7 +518,13 @@ struct RequestJson {
 }
 
 fn request_json(r: Request) -> String {
-    serde_json::to_string(&RequestJson { url: r.url, body: r.body, command: r.command.as_str().into(), client_text: r.client_text }).unwrap()
+    serde_json::to_string(&RequestJson {
+        url: r.url,
+        body: r.body,
+        command: r.command.as_str().into(),
+        client_text: r.client_text,
+    })
+    .unwrap()
 }
 
 #[derive(Serialize)]
@@ -460,6 +562,8 @@ struct StateJson {
     nut: Option<String>,
     previous_index: usize,
     has_more_previous: bool,
+    ip_check_failed: bool,
+    last_command: Option<String>,
 }
 
 /// One SQRL transaction.
@@ -473,12 +577,29 @@ impl SqrlSession {
     /// Start a session for `unlocked` against `url` with `options` (JSON: sqrlonly, hardlock,
     /// cps, suk, noiptest) and an optional Alt-ID.
     #[wasm_bindgen(constructor)]
-    pub fn new(unlocked: &SqrlUnlocked, url: &str, options_json: &str, alt_id: Option<String>) -> Result<SqrlSession, JsValue> {
+    pub fn new(
+        unlocked: &SqrlUnlocked,
+        url: &str,
+        options_json: &str,
+        alt_id: Option<String>,
+    ) -> Result<SqrlSession, JsValue> {
         let u = SqrlUrl::parse(url).map_err(js_err)?;
-        let o: OptionsJson = if options_json.trim().is_empty() { OptionsJson::default() } else { serde_json::from_str(options_json).map_err(js_err)? };
-        let options = ClientOptions { sqrlonly: o.sqrlonly, hardlock: o.hardlock, cps: o.cps, suk: o.suk, noiptest: o.noiptest };
+        let o: OptionsJson = if options_json.trim().is_empty() {
+            OptionsJson::default()
+        } else {
+            serde_json::from_str(options_json).map_err(js_err)?
+        };
+        let options = ClientOptions {
+            sqrlonly: o.sqrlonly,
+            hardlock: o.hardlock,
+            cps: o.cps,
+            suk: o.suk,
+            noiptest: o.noiptest,
+        };
         let alt = alt_id.as_deref().map(str::trim).filter(|s| !s.is_empty());
-        Ok(Self { inner: Session::new(unlocked.inner.clone(), u, options, alt) })
+        Ok(Self {
+            inner: Session::new(unlocked.inner.clone(), u, options, alt),
+        })
     }
 
     /// Site key string in use.
@@ -511,10 +632,22 @@ impl SqrlSession {
         self.inner.try_next_previous()
     }
 
-    /// Record the user's `ask` answer.
+    /// Record the user's `ask` answer (0 = OK, 1/2 = first/second button).
     #[wasm_bindgen(js_name = setButton)]
     pub fn set_button(&mut self, btn: u8) {
         self.inner.set_button(btn);
+    }
+
+    /// Same-origin URL attached to an ask button, if any.
+    #[wasm_bindgen(js_name = askButtonUrl)]
+    pub fn ask_button_url(&self, index: usize) -> Option<String> {
+        self.inner.ask_button_url(index)
+    }
+
+    /// The command of the most recently built request (`query`, `ident`, ...).
+    #[wasm_bindgen(js_name = lastCommand)]
+    pub fn last_command(&self) -> Option<String> {
+        self.inner.last_command().map(|c| c.as_str().to_string())
     }
 
     /// Build a `query` (JSON request).
@@ -539,14 +672,20 @@ impl SqrlSession {
     #[wasm_bindgen]
     pub fn enable(&mut self, iuk: Option<Vec<u8>>) -> Result<String, JsValue> {
         let k = iuk_arg(iuk)?;
-        self.inner.enable(k.as_ref()).map(request_json).map_err(js_err)
+        self.inner
+            .enable(k.as_ref())
+            .map(request_json)
+            .map_err(js_err)
     }
 
     /// Build a `remove` (IUK needed unless a previous identity matched).
     #[wasm_bindgen]
     pub fn remove(&mut self, iuk: Option<Vec<u8>>) -> Result<String, JsValue> {
         let k = iuk_arg(iuk)?;
-        self.inner.remove(k.as_ref()).map(request_json).map_err(js_err)
+        self.inner
+            .remove(k.as_ref())
+            .map(request_json)
+            .map_err(js_err)
     }
 
     /// Feed the server's response body; returns the state JSON.
@@ -588,7 +727,14 @@ impl SqrlSession {
             sin: last.and_then(|r| r.sin.clone()),
             ask: self.inner.pending_ask().map(|a| AskJson {
                 message: a.message.clone(),
-                buttons: a.buttons.iter().map(|b| AskButtonJson { label: b.label.clone(), url: b.url.clone() }).collect(),
+                buttons: a
+                    .buttons
+                    .iter()
+                    .map(|b| AskButtonJson {
+                        label: b.label.clone(),
+                        url: b.url.clone(),
+                    })
+                    .collect(),
             }),
             cps_url,
             cps_url_error,
@@ -596,29 +742,48 @@ impl SqrlSession {
             nut: last.map(|r| r.nut.clone()),
             previous_index: self.inner.previous_index(),
             has_more_previous: self.inner.previous_index() + 1 < self.inner.previous_count(),
+            ip_check_failed: self.inner.ip_check_failed(),
+            last_command: self.inner.last_command().map(|c| c.as_str().to_string()),
         };
         serde_json::to_string(&j).unwrap()
     }
 }
 
-
 fn iuk_arg(iuk: Option<Vec<u8>>) -> Result<Option<[u8; 32]>, JsValue> {
     match iuk {
         None => Ok(None),
-        Some(v) => Ok(Some(v.as_slice().try_into().map_err(|_| js_err("iuk must be 32 bytes"))?)),
+        Some(v) => Ok(Some(
+            v.as_slice()
+                .try_into()
+                .map_err(|_| js_err("iuk must be 32 bytes"))?,
+        )),
     }
 }
 
 /// QuickPass: seal a 32-byte password-derived key under the password's first characters.
 /// Returns `iterations(4) || salt(16) || iv(12) || ciphertext(32) || tag(16)`.
 #[wasm_bindgen(js_name = quickpassSeal)]
-pub fn quickpass_seal(key: &[u8], hint: &str, log_n: u8, duration_ms: u32) -> Result<Vec<u8>, JsValue> {
+pub fn quickpass_seal(
+    key: &[u8],
+    hint: &str,
+    log_n: u8,
+    duration_ms: u32,
+) -> Result<Vec<u8>, JsValue> {
     if key.len() != 32 {
         return Err(js_err("key must be 32 bytes"));
     }
     let salt: [u8; 16] = random_array();
     let iv: [u8; 12] = random_array();
-    let (mut qk, iterations) = enscrypt_duration(hint.as_bytes(), &salt, log_n, duration_ms as u64, now_ms, |_, _| {});
+    let mut hint = normalize_password(hint);
+    let (mut qk, iterations) = enscrypt_duration(
+        hint.as_bytes(),
+        &salt,
+        log_n,
+        duration_ms.max(1) as u64,
+        now_ms,
+        |_, _| {},
+    );
+    hint.zeroize();
     let ct = aes_gcm_encrypt(&qk, &iv, b"", key);
     qk.zeroize();
     let mut out = Vec::with_capacity(80);
@@ -638,7 +803,9 @@ pub fn quickpass_open(blob: &[u8], hint: &str, log_n: u8) -> Result<Vec<u8>, JsV
     let iterations = u32::from_le_bytes(blob[0..4].try_into().unwrap());
     let salt = &blob[4..20];
     let iv: [u8; 12] = blob[20..32].try_into().unwrap();
+    let mut hint = normalize_password(hint);
     let mut qk = enscrypt_iterations(hint.as_bytes(), salt, log_n, iterations, |_| {});
+    hint.zeroize();
     let r = aes_gcm_decrypt(&qk, &iv, b"", &blob[32..]).map_err(|_| js_err("incorrect QuickPass"));
     qk.zeroize();
     r

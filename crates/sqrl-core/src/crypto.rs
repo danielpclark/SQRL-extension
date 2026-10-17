@@ -115,15 +115,32 @@ pub fn enscrypt_duration(
 pub fn aes_gcm_encrypt(key: &[u8; 32], iv: &[u8; 12], aad: &[u8], plaintext: &[u8]) -> Vec<u8> {
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
     cipher
-        .encrypt(Nonce::from_slice(iv), Payload { msg: plaintext, aad })
+        .encrypt(
+            Nonce::from_slice(iv),
+            Payload {
+                msg: plaintext,
+                aad,
+            },
+        )
         .expect("AES-GCM encryption cannot fail for valid inputs")
 }
 
 /// AES-256-GCM decryption of `ciphertext || tag`. Fails if the tag does not verify.
-pub fn aes_gcm_decrypt(key: &[u8; 32], iv: &[u8; 12], aad: &[u8], ciphertext_and_tag: &[u8]) -> Result<Vec<u8>> {
+pub fn aes_gcm_decrypt(
+    key: &[u8; 32],
+    iv: &[u8; 12],
+    aad: &[u8],
+    ciphertext_and_tag: &[u8],
+) -> Result<Vec<u8>> {
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
     cipher
-        .decrypt(Nonce::from_slice(iv), Payload { msg: ciphertext_and_tag, aad })
+        .decrypt(
+            Nonce::from_slice(iv),
+            Payload {
+                msg: ciphertext_and_tag,
+                aad,
+            },
+        )
         .map_err(|_| Error::Crypto("authentication tag mismatch".into()))
 }
 
@@ -144,9 +161,11 @@ pub fn ed25519_sign(seed: &[u8; 32], msg: &[u8]) -> [u8; 64] {
 
 /// Verify an Ed25519 signature.
 pub fn ed25519_verify(public: &[u8; 32], msg: &[u8], sig: &[u8; 64]) -> Result<()> {
-    let vk = VerifyingKey::from_bytes(public).map_err(|e| Error::Crypto(format!("bad public key: {e}")))?;
+    let vk = VerifyingKey::from_bytes(public)
+        .map_err(|e| Error::Crypto(format!("bad public key: {e}")))?;
     let sig = Signature::from_bytes(sig);
-    vk.verify(msg, &sig).map_err(|_| Error::Crypto("signature verification failed".into()))
+    vk.verify(msg, &sig)
+        .map_err(|_| Error::Crypto("signature verification failed".into()))
 }
 
 /// X25519 base-point multiplication (libsodium `crypto_scalarmult_base`): the scalar is clamped.
@@ -167,7 +186,13 @@ mod tests {
     use crate::util::{hex_decode, hex_encode};
 
     fn enscrypt_hex(pw: &str, salt: &[u8], iterations: u32) -> String {
-        hex_encode(&enscrypt_iterations(pw.as_bytes(), salt, 9, iterations, |_| {}))
+        hex_encode(&enscrypt_iterations(
+            pw.as_bytes(),
+            salt,
+            9,
+            iterations,
+            |_| {},
+        ))
     }
 
     // Official EnScrypt test vectors from https://www.grc.com/sqrl/storage.htm
@@ -187,7 +212,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn enscrypt_vector_password_123() {
         assert_eq!(
@@ -198,7 +222,8 @@ mod tests {
 
     #[test]
     fn enscrypt_vector_password_salt_123() {
-        let salt = hex_decode("0000000000000000000000000000000000000000000000000000000000000000").unwrap();
+        let salt =
+            hex_decode("0000000000000000000000000000000000000000000000000000000000000000").unwrap();
         assert_eq!(
             enscrypt_hex("password", &salt, 123),
             "2f30b9d4e5c48056177ff90a6cc9da04b648a7e8451dfa60da56c148187f6a7d"
@@ -253,8 +278,12 @@ mod tests {
         let b = [2u8; 32];
         assert_eq!(x25519(&a, &x25519_base(&b)), x25519(&b, &x25519_base(&a)));
         // RFC 7748 test vector for the base point multiplication
-        let alice = hex_decode("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a").unwrap();
+        let alice =
+            hex_decode("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a").unwrap();
         let alice_pub = x25519_base(alice.as_slice().try_into().unwrap());
-        assert_eq!(hex_encode(&alice_pub), "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a");
+        assert_eq!(
+            hex_encode(&alice_pub),
+            "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a"
+        );
     }
 }

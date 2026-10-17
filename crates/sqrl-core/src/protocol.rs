@@ -15,8 +15,10 @@
 //!
 //! [`Session`] drives one complete transaction for one identity against one URL.
 
-use crate::identity::{indexed_secret, make_server_lock, unlock_request_seed, ServerLock, UnlockedIdentity};
 use crate::crypto::ed25519_sign;
+use crate::identity::{
+    indexed_secret, make_server_lock, unlock_request_seed, ServerLock, UnlockedIdentity,
+};
 use crate::url::SqrlUrl;
 use crate::util::{b64u_decode, b64u_decode_array, b64u_encode};
 use crate::{Error, Result};
@@ -50,12 +52,21 @@ impl Tif {
     pub const BAD_ID_ASSOCIATION: u32 = 0x100;
     /// The identity has been superseded by a newer (re-keyed) identity.
     pub const IDENTITY_SUPERSEDED: u32 = 0x200;
+    /// Every bit defined by protocol version 1. "All SQRL clients MUST immediately terminate
+    /// any connection and abort any authentication operation with any SQRL server which
+    /// includes TIF bits not defined" (On The Wire §tif).
+    pub const DEFINED_BITS: u32 = 0x3FF;
 
     /// Parse the hexadecimal `tif=` value.
     pub fn parse(hex: &str) -> Result<Self> {
         u32::from_str_radix(hex.trim(), 16)
             .map(Tif)
             .map_err(|_| Error::Format(format!("invalid tif '{hex}'")))
+    }
+
+    /// Whether only version-1 bits are set.
+    pub fn is_defined(self) -> bool {
+        self.0 & !Self::DEFINED_BITS == 0
     }
 
     /// Test a flag.
@@ -246,7 +257,10 @@ impl Ask {
                 Some((l, u)) => (l, Some(u.to_string())),
                 None => (p, None),
             };
-            buttons.push(AskButton { label: decode_text(label_b64)?, url });
+            buttons.push(AskButton {
+                label: decode_text(label_b64)?,
+                url,
+            });
         }
         Ok(Self { message, buttons })
     }
@@ -337,13 +351,22 @@ impl ServerResponse {
         let get = |k: &str| params.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
         let ver = get("ver").ok_or_else(|| Error::Protocol("response lacks ver".into()))?;
         if !version_supported(&ver, PROTOCOL_VERSION) {
-            return Err(Error::Protocol(format!("server speaks version {ver}, not {PROTOCOL_VERSION}")));
+            return Err(Error::Protocol(format!(
+                "server speaks version {ver}, not {PROTOCOL_VERSION}"
+            )));
         }
         let nut = get("nut").ok_or_else(|| Error::Protocol("response lacks nut".into()))?;
         if nut.is_empty() {
             return Err(Error::Protocol("response has an empty nut".into()));
         }
-        let tif = Tif::parse(&get("tif").ok_or_else(|| Error::Protocol("response lacks tif".into()))?)?;
+        let tif =
+            Tif::parse(&get("tif").ok_or_else(|| Error::Protocol("response lacks tif".into()))?)?;
+        if !tif.is_defined() {
+            return Err(Error::Protocol(format!(
+                "server returned undefined TIF bits ({}); aborting",
+                tif.to_hex()
+            )));
+        }
         let qry = get("qry").ok_or_else(|| Error::Protocol("response lacks qry".into()))?;
         let suk = match get("suk") {
             Some(s) if !s.is_empty() => Some(b64u_decode_array::<32>(&s)?),
@@ -409,6 +432,7 @@ pub struct Session {
     options: ClientOptions,
     prev_index: usize,
     last: Option<ServerResponse>,
+    last_command: Option<Command>,
     pending_btn: Option<u8>,
     answered_ask: bool,
     last_lock: Option<ServerLock>,
@@ -417,7 +441,12 @@ pub struct Session {
 impl Session {
     /// Start a session. `alt_id` is the optional "Alt-ID" that selects a different identity
     /// for the same site.
-    pub fn new(identity: UnlockedIdentity, url: SqrlUrl, options: ClientOptions, alt_id: Option<&str>) -> Self {
+    pub fn new(
+        identity: UnlockedIdentity,
+        url: SqrlUrl,
+        options: ClientOptions,
+        alt_id: Option<&str>,
+    ) -> Self {
         let site_key = url.site_key_bytes(alt_id);
         Self {
             url,
@@ -426,10 +455,16 @@ impl Session {
             options,
             prev_index: 0,
             last: None,
+            last_command: None,
             pending_btn: None,
             answered_ask: false,
             last_lock: None,
         }
+    }
+
+    /// The command of the most recently built request, if any.
+    pub fn last_command(&self) -> Option<Command> {
+        self.last_command
     }
 
     /// The URL this session was started with.
@@ -482,19 +517,39 @@ impl Session {
         }
     }
 
-    /// Record the user's answer to the server's `ask=` (1 or 2; 3 = dismissed).
+    /// Record the user's answer to the server's `ask=`: `0` for the plain "OK" (shown when the
+    /// ask carries no buttons), `1` or `2` for the first or second button. Cancelling the ask
+    /// means not sending any further command at all, so there is no value for it.
     pub fn set_button(&mut self, btn: u8) {
-        self.pending_btn = Some(btn);
+        self.pending_btn = Some(btn.min(2));
         self.answered_ask = true;
     }
 
     /// The server's pending question, if the last response carried one and it has not been
-    /// answered yet.
+    /// answered yet. Per the specification an `ask=` is only honoured in the reply to a
+    /// `query` whose TIF has the current-ID-match bit set; anywhere else it is ignored.
     pub fn pending_ask(&self) -> Option<&Ask> {
-        if self.answered_ask {
+        if self.answered_ask || self.last_command != Some(Command::Query) {
             return None;
         }
-        self.last.as_ref().and_then(|r| r.ask.as_ref())
+        let r = self.last.as_ref()?;
+        if !r.tif.id_match() || r.tif.command_failed() {
+            return None;
+        }
+        r.ask.as_ref()
+    }
+
+    /// The URL bound to ask button `index` (0-based), if the server attached one. The server
+    /// may only supply a root-anchored path; it is forced to start with `/` and is resolved
+    /// against this site's scheme, host and port, so it can never point elsewhere.
+    pub fn ask_button_url(&self, index: usize) -> Option<String> {
+        let ask = self.last.as_ref()?.ask.as_ref()?;
+        let raw = ask.buttons.get(index)?.url.as_deref()?.trim();
+        if raw.is_empty() {
+            return None;
+        }
+        let path = raw.trim_start_matches('/');
+        Some(format!("{}/{}", self.url.origin(), path))
     }
 
     /// Summary of the last response.
@@ -513,18 +568,29 @@ impl Session {
             return SessionState::Failed("the server rejected the request (client failure)".into());
         }
         if t.bad_id_association() {
-            return SessionState::Failed("identity does not match the one that started this session".into());
+            return SessionState::Failed(
+                "identity does not match the one that started this session".into(),
+            );
         }
         if t.function_not_supported() {
             return SessionState::Failed("the server does not support that command".into());
         }
         if t.command_failed() {
+            if t.0 == Tif::COMMAND_FAILED {
+                return SessionState::Failed(
+                    "the server refused the request, most likely because this connection's IP address differs from the one that requested the login page".into(),
+                );
+            }
             return SessionState::Failed("the server could not perform the command".into());
         }
         if t.id_match() {
-            SessionState::Known { disabled: t.sqrl_disabled() }
+            SessionState::Known {
+                disabled: t.sqrl_disabled(),
+            }
         } else if t.previous_id_match() {
-            SessionState::PreviousKnown { disabled: t.sqrl_disabled() }
+            SessionState::PreviousKnown {
+                disabled: t.sqrl_disabled(),
+            }
         } else {
             SessionState::Unknown
         }
@@ -537,16 +603,19 @@ impl Session {
         };
         let resolved = self.url.resolve(&u);
         if !self.url.is_same_host(&resolved) {
-            return Err(Error::Protocol(format!("CPS url '{u}' does not point at {}", self.url.host)));
+            return Err(Error::Protocol(format!(
+                "CPS url '{u}' does not point at {}",
+                self.url.host
+            )));
         }
         Ok(Some(resolved))
     }
 
-    /// The cancel URL (server `can=` if present, else the URL's `can=`).
+    /// The cancel URL: the server's most recent `can=` reply parameter (a plain URL or
+    /// root-relative path) if any, else the base64url-encoded `can=` of the SQRL URL.
     pub fn cancel_url(&self) -> Option<String> {
         if let Some(c) = self.last.as_ref().and_then(|r| r.can.clone()) {
-            let decoded = b64u_decode(&c).ok().and_then(|b| String::from_utf8(b).ok()).unwrap_or(c);
-            return Some(self.url.resolve(&decoded));
+            return Some(self.url.resolve(&c));
         }
         self.url.cancel_url.clone()
     }
@@ -598,7 +667,16 @@ impl Session {
             client.push_str(&format!("suk={}\r\n", b64u_encode(&l.suk)));
             client.push_str(&format!("vuk={}\r\n", b64u_encode(&l.vuk)));
         }
-        if let Some(opt) = self.options.to_wire() {
+        // The SUK is requested with every command (as GRC's reference client does) so that a
+        // later enable/remove always has it. sqrlonly/hardlock only make sense while an
+        // association exists, so they are never sent with `remove`.
+        let mut opts = self.options;
+        opts.suk = true;
+        if command == Command::Remove {
+            opts.sqrlonly = false;
+            opts.hardlock = false;
+        }
+        if let Some(opt) = opts.to_wire() {
             client.push_str(&format!("opt={opt}\r\n"));
         }
         if let Some(b) = self.pending_btn.take() {
@@ -606,10 +684,16 @@ impl Session {
         }
         if let Some(sin) = self.last.as_ref().and_then(|r| r.sin.clone()) {
             let mut seed = self.identity.site_seed(&self.site_key);
-            client.push_str(&format!("ins={}\r\n", b64u_encode(&indexed_secret(&seed, sin.as_bytes()))));
+            client.push_str(&format!(
+                "ins={}\r\n",
+                b64u_encode(&indexed_secret(&seed, sin.as_bytes()))
+            ));
             seed.zeroize();
             if let Some(ps) = &pseed {
-                client.push_str(&format!("pins={}\r\n", b64u_encode(&indexed_secret(ps, sin.as_bytes()))));
+                client.push_str(&format!(
+                    "pins={}\r\n",
+                    b64u_encode(&indexed_secret(ps, sin.as_bytes()))
+                ));
             }
         }
 
@@ -622,7 +706,10 @@ impl Session {
         let ids = ed25519_sign(&seed, &msg);
         seed.zeroize();
 
-        let mut body = format!("client={client_b64}&server={server}&ids={}", b64u_encode(&ids));
+        let mut body = format!(
+            "client={client_b64}&server={server}&ids={}",
+            b64u_encode(&ids)
+        );
         if let Some(mut ps) = pseed {
             let pids = ed25519_sign(&ps, &msg);
             ps.zeroize();
@@ -634,17 +721,18 @@ impl Session {
             body.push_str(&format!("&urs={}", b64u_encode(&urs)));
         }
         self.last_lock = lock;
-        Ok(Request { url, body, command, client_text: client })
+        self.last_command = Some(command);
+        Ok(Request {
+            url,
+            body,
+            command,
+            client_text: client,
+        })
     }
 
-    /// Build the initial (or a repeated) `query`. The SUK is always requested so that a
-    /// later `enable`/`remove` has what it needs.
+    /// Build the initial (or a repeated) `query`, offering the current previous identity.
     pub fn query(&mut self) -> Result<Request> {
-        let saved = self.options;
-        self.options.suk = true;
-        let r = self.build(Command::Query, true, None, None);
-        self.options = saved;
-        r
+        self.build(Command::Query, true, None, None)
     }
 
     /// Whether the server's last answer says the account is still bound to the previous
@@ -656,11 +744,9 @@ impl Session {
 
     /// Lock material and `urs` seed for a re-key (previous identity matched).
     fn rekey_material(&self) -> Result<(ServerLock, [u8; 32])> {
-        let suk = self
-            .last
-            .as_ref()
-            .and_then(|r| r.suk)
-            .ok_or_else(|| Error::Protocol("server matched a previous identity but sent no suk".into()))?;
+        let suk = self.last.as_ref().and_then(|r| r.suk).ok_or_else(|| {
+            Error::Protocol("server matched a previous identity but sent no suk".into())
+        })?;
         let urs_seed = self
             .identity
             .previous_unlock_request_seed(self.prev_index, &suk)
@@ -706,12 +792,11 @@ impl Session {
             let (lock, urs) = self.rekey_material()?;
             return Ok((Some(lock), urs));
         }
-        let suk = self
-            .last
-            .as_ref()
-            .and_then(|r| r.suk)
-            .ok_or_else(|| Error::Protocol("the server did not provide the account's suk".into()))?;
-        let iuk = iuk.ok_or_else(|| Error::Protocol("this operation needs the rescue code (IUK)".into()))?;
+        let suk = self.last.as_ref().and_then(|r| r.suk).ok_or_else(|| {
+            Error::Protocol("the server did not provide the account's suk".into())
+        })?;
+        let iuk = iuk
+            .ok_or_else(|| Error::Protocol("this operation needs the rescue code (IUK)".into()))?;
         Ok((None, unlock_request_seed(iuk, &suk)))
     }
 
@@ -746,6 +831,15 @@ impl Session {
         }
         self.last = Some(resp);
         Ok(self.last.as_ref().unwrap())
+    }
+
+    /// Whether the last reply was the "exactly 0x40" a server returns when the query IP does
+    /// not match the IP that requested the SQRL URL and `noiptest` was not offered.
+    pub fn ip_check_failed(&self) -> bool {
+        self.last
+            .as_ref()
+            .map(|r| r.tif.0 == Tif::COMMAND_FAILED)
+            .unwrap_or(false)
     }
 }
 
@@ -784,8 +878,14 @@ mod tests {
         let ask = Ask {
             message: "Delete everything?".into(),
             buttons: vec![
-                AskButton { label: "Yes".into(), url: Some("https://example.com/yes".into()) },
-                AskButton { label: "No".into(), url: None },
+                AskButton {
+                    label: "Yes".into(),
+                    url: Some("https://example.com/yes".into()),
+                },
+                AskButton {
+                    label: "No".into(),
+                    url: None,
+                },
             ],
         };
         let wire = ask.to_wire();
@@ -798,9 +898,21 @@ mod tests {
 
     #[test]
     fn options_wire() {
-        let o = ClientOptions { sqrlonly: true, cps: true, ..Default::default() };
+        let o = ClientOptions {
+            sqrlonly: true,
+            cps: true,
+            ..Default::default()
+        };
         assert_eq!(o.to_wire().as_deref(), Some("sqrlonly~cps"));
-        assert_eq!(ClientOptions::from_wire("cps~suk~noiptest"), ClientOptions { cps: true, suk: true, noiptest: true, ..Default::default() });
+        assert_eq!(
+            ClientOptions::from_wire("cps~suk~noiptest"),
+            ClientOptions {
+                cps: true,
+                suk: true,
+                noiptest: true,
+                ..Default::default()
+            }
+        );
         assert_eq!(ClientOptions::default().to_wire(), None);
     }
 
@@ -812,7 +924,8 @@ mod tests {
         assert_eq!(r.tif, Tif(5));
         assert_eq!(r.sin.as_deref(), Some("0"));
         assert!(r.suk.is_none());
-        let bad = ServerResponse::parse(&b64u_encode(b"ver=2\r\nnut=a\r\ntif=0\r\nqry=/x\r\n")).unwrap_err();
+        let bad = ServerResponse::parse(&b64u_encode(b"ver=2\r\nnut=a\r\ntif=0\r\nqry=/x\r\n"))
+            .unwrap_err();
         assert!(format!("{bad}").contains("version"));
         assert!(ServerResponse::parse(&b64u_encode(b"ver=1\r\ntif=0\r\nqry=/x\r\n")).is_err());
     }
@@ -832,5 +945,110 @@ mod tests {
         assert!(!req.body.contains("&pids="));
         // ident before a query is refused
         assert!(s.ident().is_err());
+    }
+
+    #[test]
+    fn remove_never_carries_sqrlonly_or_hardlock() {
+        let id = UnlockedIdentity::from_iuk(&[1u8; 32]);
+        let url = SqrlUrl::parse("sqrl://example.com/cli.sqrl?nut=n1").unwrap();
+        let mut s = Session::new(
+            id,
+            url,
+            ClientOptions {
+                sqrlonly: true,
+                hardlock: true,
+                cps: true,
+                ..Default::default()
+            },
+            None,
+        );
+        let q = s.query().unwrap();
+        assert!(q.client_text.contains("opt=sqrlonly~hardlock~cps~suk\r\n"));
+        let suk = b64u_encode(&[9u8; 32]);
+        s.feed(&b64u_encode(
+            format!("ver=1\r\nnut=a\r\ntif=5\r\nqry=/cli.sqrl?nut=a\r\nsuk={suk}\r\n").as_bytes(),
+        ))
+        .unwrap();
+        let r = s.remove(Some(&[1u8; 32])).unwrap();
+        assert!(r.client_text.contains("opt=cps~suk\r\n"));
+        let i = s.ident().unwrap();
+        assert!(i.client_text.contains("opt=sqrlonly~hardlock~cps~suk\r\n"));
+    }
+
+    #[test]
+    fn undefined_tif_bits_abort() {
+        let id = UnlockedIdentity::from_iuk(&[1u8; 32]);
+        let url = SqrlUrl::parse("sqrl://example.com/cli.sqrl?nut=n1").unwrap();
+        let mut s = Session::new(id, url, ClientOptions::default(), None);
+        assert!(s
+            .feed(&b64u_encode(
+                b"ver=1\r\nnut=a\r\ntif=405\r\nqry=/cli.sqrl?nut=a\r\n"
+            ))
+            .is_err());
+        assert!(s
+            .feed(&b64u_encode(
+                b"ver=1\r\nnut=a\r\ntif=3ff\r\nqry=/cli.sqrl?nut=a\r\n"
+            ))
+            .is_ok());
+    }
+
+    #[test]
+    fn ask_only_counts_in_query_replies_with_id_match() {
+        let id = UnlockedIdentity::from_iuk(&[1u8; 32]);
+        let url = SqrlUrl::parse("sqrl://example.com/cli.sqrl?nut=n1").unwrap();
+        let mut s = Session::new(id, url, ClientOptions::default(), None);
+        let ask = Ask {
+            message: "Sure?".into(),
+            buttons: vec![AskButton {
+                label: "Go".into(),
+                url: Some("extra/confirm.html".into()),
+            }],
+        }
+        .to_wire();
+        s.query().unwrap();
+        // unknown identity: ignored
+        s.feed(&b64u_encode(
+            format!("ver=1\r\nnut=a\r\ntif=4\r\nqry=/cli.sqrl?nut=a\r\nask={ask}\r\n").as_bytes(),
+        ))
+        .unwrap();
+        assert!(s.pending_ask().is_none());
+        // known identity: honoured, and the button URL is pinned to this origin
+        s.query().unwrap();
+        s.feed(&b64u_encode(
+            format!("ver=1\r\nnut=b\r\ntif=5\r\nqry=/cli.sqrl?nut=b\r\nask={ask}\r\n").as_bytes(),
+        ))
+        .unwrap();
+        assert!(s.pending_ask().is_some());
+        assert_eq!(
+            s.ask_button_url(0).as_deref(),
+            Some("https://example.com/extra/confirm.html")
+        );
+        s.set_button(1);
+        assert!(s.pending_ask().is_none());
+        let i = s.ident().unwrap();
+        assert!(i.client_text.contains("btn=1\r\n"));
+        // an ask in a non-query reply is ignored
+        s.feed(&b64u_encode(
+            format!("ver=1\r\nnut=c\r\ntif=5\r\nqry=/cli.sqrl?nut=c\r\nask={ask}\r\n").as_bytes(),
+        ))
+        .unwrap();
+        assert!(s.pending_ask().is_none());
+    }
+
+    #[test]
+    fn server_can_is_a_plain_url_or_path() {
+        let id = UnlockedIdentity::from_iuk(&[1u8; 32]);
+        let can = b64u_encode(b"https://example.com/login");
+        let url = SqrlUrl::parse(&format!("sqrl://example.com/cli.sqrl?nut=n1&can={can}")).unwrap();
+        let mut s = Session::new(id, url, ClientOptions::default(), None);
+        assert_eq!(s.cancel_url().as_deref(), Some("https://example.com/login"));
+        s.feed(&b64u_encode(
+            b"ver=1\r\nnut=a\r\ntif=5\r\nqry=/cli.sqrl?nut=a\r\ncan=/bye?x=1\r\n",
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cancel_url().as_deref(),
+            Some("https://example.com/bye?x=1")
+        );
     }
 }

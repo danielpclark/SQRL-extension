@@ -7,7 +7,11 @@ export const DEFAULT_SETTINGS = {
   defaultIdentity: null,
   askAltId: false,
   rescueSeconds: 5,
-  closeAfterLogin: true
+  closeAfterLogin: true,
+  // Send opt=noiptest. Off by default: for a same-device login the IPs must match, and the
+  // server's IP check is one of SQRL's anti-spoofing protections. Only for VPN/proxy setups
+  // where the check is known to fail.
+  noiptest: false
 };
 
 export async function getSettings() {

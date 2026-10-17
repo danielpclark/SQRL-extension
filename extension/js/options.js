@@ -26,6 +26,7 @@ async function init() {
   sel.value = settings.defaultIdentity || (ids[0] ? ids[0].id : '');
   $('#askAltId').checked = !!settings.askAltId;
   $('#closeAfterLogin').checked = !!settings.closeAfterLogin;
+  $('#noiptest').checked = !!settings.noiptest;
   $('#rescueSeconds').value = settings.rescueSeconds;
   $('#extId').textContent = api.runtime.id;
   await refreshQuickPass();
@@ -36,6 +37,7 @@ $('#btnSave').addEventListener('click', async () => {
     defaultIdentity: $('#defaultIdentity').value || null,
     askAltId: $('#askAltId').checked,
     closeAfterLogin: $('#closeAfterLogin').checked,
+    noiptest: $('#noiptest').checked,
     rescueSeconds: Math.max(1, Math.min(60, Number($('#rescueSeconds').value) || 5))
   });
   toast('Settings saved', 'success');

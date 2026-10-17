@@ -17,6 +17,7 @@ base64 = { version = "0.22", default-features = false, features = ["alloc"] }
 getrandom = { version = "0.2", features = ["js"] }
 zeroize = { version = "1", features = ["zeroize_derive"] }
 subtle = { version = "2", default-features = false }
+unicode-normalization = { version = "0.1", default-features = false }
 
 [features]
 default = ["server"]

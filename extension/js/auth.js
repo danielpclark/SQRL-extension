@@ -12,10 +12,12 @@ import { $, el, show, showOnly, setProgress, toast } from './ui.js';
 
 const api = globalThis.browser ?? globalThis.chrome;
 const PANELS = ['#panel-identity', '#panel-noidentity', '#panel-progress', '#panel-rescue', '#panel-confirm', '#panel-ask', '#panel-result'];
+// Type 1 option flags (S4 specification, "Cross-Client Options & Flags").
 const FLAG_SQRL_ONLY = 0x0004;
 const FLAG_NO_BYPASS = 0x0008;
-const FLAG_WARN_REMOTE = 0x0010;
-const FLAG_CLEAR_QP_ON_IDLE = 0x0020;
+const FLAG_WARN_MITM = 0x0010;
+const FLAG_CLEAR_QP_ON_IDLE = 0x0080;
+const FLAG_WARN_NON_CPS = 0x0100;
 
 const params = new URLSearchParams(location.search);
 const cpsParam = params.get('cps');
@@ -90,17 +92,28 @@ function askRescueCode(text) {
   });
 }
 
+/**
+ * Show a server `ask=`. Resolves with the btn value to send (0 = the plain OK that is shown
+ * only when the ask has no buttons, 1/2 = first/second button) or null when the user
+ * cancels, which ends the transaction without any further command. Focus is placed on
+ * Cancel so that a stray Enter never acknowledges anything (GRC client behaviour).
+ */
 function askQuestion(ask) {
   return new Promise((resolve) => {
     panel('#panel-ask');
     $('#askText').textContent = ask.message;
     const box = $('#askButtons');
     box.textContent = '';
-    const buttons = ask.buttons.length ? ask.buttons : [{ label: 'OK' }];
-    buttons.forEach((b, i) => {
-      box.append(el('button', { class: i === 0 ? 'primary' : '', onclick: () => resolve(i + 1) }, b.label));
-    });
-    box.append(el('button', { onclick: () => resolve(3) }, 'Dismiss'));
+    if (ask.buttons.length) {
+      ask.buttons.slice(0, 2).forEach((b, i) => {
+        box.append(el('button', { class: 'primary', onclick: () => resolve(i + 1) }, b.label));
+      });
+    } else {
+      box.append(el('button', { class: 'primary', onclick: () => resolve(0) }, 'OK'));
+    }
+    const cancel = el('button', { onclick: () => resolve(null) }, 'Cancel');
+    box.append(cancel);
+    cancel.focus();
   });
 }
 
@@ -234,14 +247,16 @@ async function unlock(password) {
   const remember = $('#optRemember').checked;
   const hintLen = S.settings.hintLength || 0;
   if (remember && hintLen > 0 && password.length > hintLen) {
-    const { blob } = await core().call('quickpassSeal', { key, hint: password.slice(0, hintLen), logN: S.settings.logN, ms: 500 });
+    const { blob } = await core().call('quickpassSeal', { key, hint: password.slice(0, hintLen), logN: S.settings.logN, ms: 1000 });
+    // The idle timeout only applies when flag 0x0080 is set ("both are required").
+    const idleEnabled = !!(S.settings.optionFlags & FLAG_CLEAR_QP_ON_IDLE);
     await store.setQuickPass({
       identityId: S.record.id,
       blob: store.bytesToB64(blob),
       hintLength: hintLen,
       logN: S.settings.logN,
-      idleTimeoutMinutes: S.settings.idleTimeoutMinutes,
-      clearOnIdle: !!(S.settings.optionFlags & FLAG_CLEAR_QP_ON_IDLE),
+      idleTimeoutMinutes: idleEnabled ? S.settings.idleTimeoutMinutes : 0,
+      clearOnIdle: idleEnabled,
       createdAt: Date.now()
     });
   }
@@ -251,15 +266,27 @@ function options() {
   return {
     cps: true,
     sqrlonly: $('#optSqrlOnly').checked,
-    hardlock: $('#optHardlock').checked
+    hardlock: $('#optHardlock').checked,
+    noiptest: !!S.globals.noiptest
   };
 }
 
-async function send(reqPromise) {
-  const req = await reqPromise;
-  progress(`Contacting ${S.urlInfo.host} (${req.command})…`);
-  const body = await postRequest(req);
-  return core().call('sessionFeed', { session: S.session, body });
+/**
+ * Build a request with `build()`, POST it and feed the reply. A transient error (TIF 0x20)
+ * means "reissue the same command with the fresh nut"; if the retry fails identically the
+ * page the user is logging in from has expired.
+ */
+async function send(build) {
+  let st = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const req = await build();
+    progress(`Contacting ${S.urlInfo.host} (${req.command})…`);
+    const body = await postRequest(req);
+    st = await core().call('sessionFeed', { session: S.session, body });
+    if (st.state !== 'transient') return st;
+  }
+  st.message = 'The login page has expired. Reload it in the website and try again.';
+  return st;
 }
 
 /** Open the session and run the initial query (trying older previous identities as needed). */
@@ -271,21 +298,23 @@ async function startSession() {
   const altId = S.globals.askAltId ? $('#altId').value.trim() : '';
   const s = await core().call('sessionNew', { unlocked: S.unlocked, url: sqrlUrl, options: options(), altId });
   S.session = s.session;
-  let st = await send(core().call('sessionQuery', { session: S.session }));
-  if (st.state === 'transient') {
-    st = await send(core().call('sessionQuery', { session: S.session }));
-  }
+  const query = () => core().call('sessionQuery', { session: S.session });
+  let st = await send(query);
+  // "If neither the 0x01 nor 0x02 bits are set, and if the client has earlier previous
+  // identity credentials, it should successively try each one, in turn."
   while (st.state === 'unknown' && s.hasPrevious) {
     const { more } = await core().call('sessionTryNextPrevious', { session: S.session });
     if (!more) break;
-    st = await send(core().call('sessionQuery', { session: S.session }));
+    st = await send(query);
   }
   return st;
 }
 
 function describeFailure(st) {
-  if (st.state === 'superseded') return 'This identity has been superseded on this site by a newer identity. Log in with the newer identity.';
-  if (st.state === 'transient') return 'The site reported a transient error. Please try again.';
+  if (st.state === 'superseded') {
+    return `${S.urlInfo.host} reports that this identity is obsolete: it was re-keyed on another of your devices and the site already knows the newer identity. Export the current identity from that device and import it here, then try again.`;
+  }
+  if (st.state === 'transient') return st.message || 'The site reported a transient error. Please try again.';
   return st.message || 'The site rejected the request.';
 }
 
@@ -300,16 +329,27 @@ async function finishLogin(st, verb = 'Logged in') {
     if (!inTab && S.globals.closeAfterLogin) window.close();
     return;
   }
-  result(`${verb} at ${S.urlInfo.host}. The website should update by itself; if it does not, reload it.`);
-  if (!inTab && S.globals.closeAfterLogin) setTimeout(() => window.close(), 2500);
+  // The server did not use CPS (no url=). Flag 0x0100 asks the client to point this out,
+  // since without CPS the login is open to spoofing by a page that relayed another site's link.
+  const warn = S.settings.optionFlags & FLAG_WARN_NON_CPS ? ' Note: this site did not use SQRL\'s Client Provided Session; without it, make sure the page you came from really belongs to ' + S.urlInfo.host + '.' : '';
+  result(`${verb} at ${S.urlInfo.host}. The website should update by itself; if it does not, reload it.${warn}`, { kind: warn ? '' : 'ok' });
+  if (!inTab && S.globals.closeAfterLogin && !warn) setTimeout(() => window.close(), 2500);
 }
 
-/** Handle a pending server question, if any. Returns false if the user dismissed it. */
+/**
+ * Handle a pending server question, if any. Returns false when the user cancelled, in which
+ * case no further command is sent. A button may carry a same-origin URL that is opened too.
+ */
 async function handleAsk(st) {
   if (!st.ask) return true;
   const btn = await askQuestion(st.ask);
+  if (btn === null) return false;
   await core().call('sessionSetButton', { session: S.session, btn });
-  return btn !== 3;
+  if (btn > 0) {
+    const { url } = await core().call('sessionAskButtonUrl', { session: S.session, index: btn - 1 });
+    if (url) api.tabs.create({ url, active: false }).catch(() => {});
+  }
+  return true;
 }
 
 async function login() {
@@ -318,7 +358,7 @@ async function login() {
     result(describeFailure(st), { kind: 'error', retry: st.state !== 'superseded' });
     return;
   }
-  if (!st.ipsMatched && S.settings.optionFlags & FLAG_WARN_REMOTE) {
+  if (!st.ipsMatched && S.settings.optionFlags & FLAG_WARN_MITM) {
     const ok = await confirm(
       `${S.urlInfo.host} reports that this login was requested from a different network address than the one you are using now. That can happen behind proxies, but it can also mean someone else started this login. Continue?`
     );
@@ -340,7 +380,7 @@ async function login() {
     if (!ok) return cancel();
   }
   if (!(await handleAsk(st))) return cancel();
-  const st2 = await send(core().call('sessionIdent', { session: S.session }));
+  const st2 = await send(() => core().call('sessionIdent', { session: S.session }));
   if (st2.state === 'known' && !st2.disabled) {
     await finishLogin(st2);
   } else {
@@ -364,7 +404,7 @@ async function disableSite() {
   );
   if (!ok) return cancel();
   if (!(await handleAsk(st))) return cancel();
-  const st2 = await send(core().call('sessionDisable', { session: S.session }));
+  const st2 = await send(() => core().call('sessionDisable', { session: S.session }));
   if (st2.sqrlDisabled && !st2.message) result(`SQRL login is now disabled at ${S.urlInfo.host}.`);
   else result(describeFailure(st2), { kind: 'error' });
 }
@@ -397,7 +437,7 @@ async function enableSite() {
   const iuk = await withIuk(st, 're-enable SQRL login');
   if (iuk === false) return cancel();
   if (!(await handleAsk(st))) return cancel();
-  const st2 = await send(core().call('sessionEnable', { session: S.session, iuk }));
+  const st2 = await send(() => core().call('sessionEnable', { session: S.session, iuk }));
   if (st2.state === 'known' && !st2.disabled) await finishLogin(st2, 'SQRL login re-enabled and logged in');
   else result(describeFailure(st2), { kind: 'error' });
 }
@@ -416,7 +456,7 @@ async function removeSite() {
   const iuk = await withIuk(st, 'remove the association');
   if (iuk === false) return cancel();
   if (!(await handleAsk(st))) return cancel();
-  const st2 = await send(core().call('sessionRemove', { session: S.session, iuk }));
+  const st2 = await send(() => core().call('sessionRemove', { session: S.session, iuk }));
   if (st2.state === 'unknown' && !st2.message) {
     result(`The SQRL association at ${S.urlInfo.host} has been removed.`);
     if (st2.cpsUrl) await navigateAway(st2.cpsUrl);

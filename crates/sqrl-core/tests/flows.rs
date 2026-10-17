@@ -11,19 +11,35 @@ const IP: &str = "203.0.113.7";
 
 /// Simulate the HTTPS transport: pull the nut from the POST URL and hand the body to the server.
 fn post(server: &mut ReferenceServer, req: &sqrl_core::protocol::Request, ip: &str) -> String {
-    assert!(req.url.starts_with("https://example.com/cli.sqrl?"), "{}", req.url);
+    assert!(
+        req.url.starts_with("https://example.com/cli.sqrl?"),
+        "{}",
+        req.url
+    );
     let query = req.url.split_once('?').unwrap().1;
-    let nut = query_pairs(query).into_iter().find(|(k, _)| k == "nut").map(|(_, v)| v).unwrap();
+    let nut = query_pairs(query)
+        .into_iter()
+        .find(|(k, _)| k == "nut")
+        .map(|(_, v)| v)
+        .unwrap();
     server.handle(&nut, &req.body, ip)
 }
 
-fn new_session(server: &mut ReferenceServer, identity: &UnlockedIdentity, options: ClientOptions) -> (String, Session) {
+fn new_session(
+    server: &mut ReferenceServer,
+    identity: &UnlockedIdentity,
+    options: ClientOptions,
+) -> (String, Session) {
     let (sid, url) = server.new_login_url(IP, Some("/cancelled"));
     let url = SqrlUrl::parse(&url).unwrap();
     (sid, Session::new(identity.clone(), url, options, None))
 }
 
-fn exchange(server: &mut ReferenceServer, session: &mut Session, req: sqrl_core::protocol::Request) -> Tif {
+fn exchange(
+    server: &mut ReferenceServer,
+    session: &mut Session,
+    req: sqrl_core::protocol::Request,
+) -> Tif {
     let body = post(server, &req, IP);
     session.feed(&body).unwrap().tif
 }
@@ -32,7 +48,10 @@ fn exchange(server: &mut ReferenceServer, session: &mut Session, req: sqrl_core:
 fn create_account_then_login_with_cps() {
     let mut server = ReferenceServer::new("example.com", "/cli.sqrl");
     let identity = UnlockedIdentity::from_iuk(&[1u8; 32]);
-    let opts = ClientOptions { cps: true, ..Default::default() };
+    let opts = ClientOptions {
+        cps: true,
+        ..Default::default()
+    };
 
     // First visit: unknown identity → create the account.
     let (sid, mut s) = new_session(&mut server, &identity, opts);
@@ -52,7 +71,10 @@ fn create_account_then_login_with_cps() {
     assert_eq!(server.session(&sid).unwrap().authenticated, Some(s.idk()));
     let cps = s.cps_url().unwrap().unwrap();
     assert_eq!(cps, format!("https://example.com/loggedin?session={sid}"));
-    assert_eq!(s.cancel_url().as_deref(), Some("https://example.com/cancelled"));
+    assert_eq!(
+        s.cancel_url().as_deref(),
+        Some("https://example.com/cancelled")
+    );
     assert_eq!(server.account_count(), 1);
 
     // Second visit: known identity → plain login, no suk/vuk needed.
@@ -156,7 +178,11 @@ fn rekey_moves_account_to_new_identity() {
     assert_eq!(s.state(), SessionState::PreviousKnown { disabled: false });
     assert!(s.last_response().unwrap().suk.is_some());
     let i = s.ident().unwrap();
-    assert!(i.client_text.contains("pidk=") && i.client_text.contains("suk=") && i.client_text.contains("vuk="));
+    assert!(
+        i.client_text.contains("pidk=")
+            && i.client_text.contains("suk=")
+            && i.client_text.contains("vuk=")
+    );
     assert!(i.body.contains("&pids=") && i.body.contains("&urs="));
     let tif = exchange(&mut server, &mut s, i);
     assert!(tif.id_match() && !tif.is_error());
@@ -258,9 +284,28 @@ fn ask_and_btn() {
     let mut server = ReferenceServer::new("example.com", "/cli.sqrl");
     server.ask = Some(Ask {
         message: "Create an account on example.com?".into(),
-        buttons: vec![AskButton { label: "Yes".into(), url: None }, AskButton { label: "No".into(), url: None }],
+        buttons: vec![
+            AskButton {
+                label: "Yes".into(),
+                url: None,
+            },
+            AskButton {
+                label: "No".into(),
+                url: None,
+            },
+        ],
     });
     let identity = UnlockedIdentity::from_iuk(&[11u8; 32]);
+    // An ask is only valid once the server recognises the current identity, so create the
+    // account first; no question is posed to an unknown identity.
+    let (_, mut s) = new_session(&mut server, &identity, ClientOptions::default());
+    let q = s.query().unwrap();
+    exchange(&mut server, &mut s, q);
+    assert!(s.pending_ask().is_none());
+    let i = s.ident().unwrap();
+    let tif = exchange(&mut server, &mut s, i);
+    assert!(tif.id_match());
+
     let (sid, mut s) = new_session(&mut server, &identity, ClientOptions::default());
     let q = s.query().unwrap();
     exchange(&mut server, &mut s, q);
@@ -343,11 +388,25 @@ fn tampering_is_detected() {
     let identity = UnlockedIdentity::from_iuk(&[15u8; 32]);
     let (_, mut s) = new_session(&mut server, &identity, ClientOptions::default());
     let q = s.query().unwrap();
-    let nut = query_pairs(q.url.split_once('?').unwrap().1).into_iter().find(|(k, _)| k == "nut").unwrap().1;
+    let nut = query_pairs(q.url.split_once('?').unwrap().1)
+        .into_iter()
+        .find(|(k, _)| k == "nut")
+        .unwrap()
+        .1;
 
     // Modified server parameter → client failure.
     let bad_server = b64u_encode(b"sqrl://example.com/cli.sqrl?nut=other");
-    let tampered = q.body.replace(&q.body.split("&server=").nth(1).unwrap().split('&').next().unwrap().to_string(), &bad_server);
+    let tampered = q.body.replace(
+        &q.body
+            .split("&server=")
+            .nth(1)
+            .unwrap()
+            .split('&')
+            .next()
+            .unwrap()
+            .to_string(),
+        &bad_server,
+    );
     let resp = server.handle(&nut, &tampered, IP);
     s.feed(&resp).unwrap();
     assert!(matches!(s.state(), SessionState::Failed(_)));
@@ -355,7 +414,11 @@ fn tampering_is_detected() {
     // Corrupted signature → client failure.
     let (_, mut s) = new_session(&mut server, &identity, ClientOptions::default());
     let q = s.query().unwrap();
-    let nut = query_pairs(q.url.split_once('?').unwrap().1).into_iter().find(|(k, _)| k == "nut").unwrap().1;
+    let nut = query_pairs(q.url.split_once('?').unwrap().1)
+        .into_iter()
+        .find(|(k, _)| k == "nut")
+        .unwrap()
+        .1;
     let mut body = q.body.clone();
     let l = body.len();
     body.replace_range(l - 1..l, if body.ends_with('A') { "B" } else { "A" });
@@ -365,13 +428,16 @@ fn tampering_is_detected() {
 
     // Response steering the client to another host is rejected by the client.
     let (_, mut s) = new_session(&mut server, &identity, ClientOptions::default());
-    let evil = b64u_encode(b"ver=1\r\nnut=x\r\ntif=0\r\nqry=https://evil.example/cli.sqrl?nut=x\r\n");
+    let evil =
+        b64u_encode(b"ver=1\r\nnut=x\r\ntif=0\r\nqry=https://evil.example/cli.sqrl?nut=x\r\n");
     assert!(s.feed(&evil).is_err());
     let evil = b64u_encode(b"ver=1\r\nnut=x\r\ntif=0\r\nqry=//evil.example/cli.sqrl?nut=x\r\n");
     assert!(s.feed(&evil).is_err());
 
     // CPS url on another host is rejected.
-    let evil = b64u_encode(b"ver=1\r\nnut=x\r\ntif=1\r\nqry=/cli.sqrl?nut=x\r\nurl=https://evil.example/\r\n");
+    let evil = b64u_encode(
+        b"ver=1\r\nnut=x\r\ntif=1\r\nqry=/cli.sqrl?nut=x\r\nurl=https://evil.example/\r\n",
+    );
     s.feed(&evil).unwrap();
     assert!(s.cps_url().is_err());
 }
@@ -386,7 +452,14 @@ fn ip_mismatch_is_refused_unless_noiptest() {
     let tif = s.feed(&body).unwrap().tif;
     assert!(!tif.ips_matched() && tif.command_failed());
 
-    let (_, mut s) = new_session(&mut server, &identity, ClientOptions { noiptest: true, ..Default::default() });
+    let (_, mut s) = new_session(
+        &mut server,
+        &identity,
+        ClientOptions {
+            noiptest: true,
+            ..Default::default()
+        },
+    );
     let q = s.query().unwrap();
     let body = post(&mut server, &q, "198.51.100.1");
     let tif = s.feed(&body).unwrap().tif;
@@ -415,7 +488,12 @@ fn different_identity_mid_session_is_bad_association() {
 fn alt_id_yields_a_different_identity_on_the_same_site() {
     let identity = UnlockedIdentity::from_iuk(&[19u8; 32]);
     let url = SqrlUrl::parse("sqrl://example.com/cli.sqrl?nut=1").unwrap();
-    let plain = Session::new(identity.clone(), url.clone(), ClientOptions::default(), None);
+    let plain = Session::new(
+        identity.clone(),
+        url.clone(),
+        ClientOptions::default(),
+        None,
+    );
     let alt = Session::new(identity, url, ClientOptions::default(), Some("work"));
     assert_ne!(plain.idk(), alt.idk());
 }
