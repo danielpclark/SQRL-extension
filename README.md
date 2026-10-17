@@ -104,9 +104,15 @@ a site; the login dialog requests it.
    password; the extension generates the rescue code, which you must write down and
    re-type). Back it up: the identity file (`.sqrl`), the textual identity, or the QR code.
    Existing identities from GRC's client or any other SQRL client import directly.
-2. On a SQRL-enabled site, click its *Sign in with SQRL* link. The login dialog shows the
-   site's domain, asks for your password (or QuickPass), and logs you in. Unknown sites
-   ask before an account is created; re-keyed identities update the site silently.
+2. On a SQRL-enabled site, click its *Sign in with SQRL* link (sites using SQRL's standard
+   same-device handoff land in the extension automatically), or click the toolbar button,
+   which lists the SQRL links on the current page. The first login to a site asks the
+   browser for permission to contact that one site. The login dialog shows the site's
+   domain, asks for your password (or QuickPass), and logs you in. Unknown sites ask
+   before an account is created; re-keyed identities update the site silently.
+   To have plain `sqrl://` link clicks handled on every site, turn on "Handle sqrl:// link
+   clicks automatically" in the settings; that is the only option that asks for access to
+   all sites.
 3. *Advanced* in the login dialog disables, re-enables or removes your SQRL association on
    the site. Re-enabling and removal need the rescue code, as the protocol requires.
 
@@ -135,8 +141,10 @@ works) and link it from both listings. Bump `version` in `extension/manifest.jso
    for each permission (the text in PRIVACY.md is written to be pasted there), the privacy
    policy URL, and certify that no remote code is used (the WebAssembly is bundled; the
    `'wasm-unsafe-eval'` CSP entry is the standard way to allow it).
-4. Submit for review. Broad host access (`https://*/*`) triggers a manual review; it is
-   inherent to a SQRL client, which must POST to whichever site the user signs in to.
+4. Submit for review. The extension declares no broad host access: site access is an
+   optional host permission requested per site at login, and the current tab is only read
+   under `activeTab` when the popup is opened, so the "broad host permissions" review
+   trigger does not apply.
 
 ### Firefox Add-ons (addons.mozilla.org)
 

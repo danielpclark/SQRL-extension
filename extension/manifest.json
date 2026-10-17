@@ -15,15 +15,21 @@
   },
   "permissions": [
     "storage",
-    "tabs",
     "alarms",
     "idle",
+    "activeTab",
+    "scripting",
     "declarativeNetRequest"
   ],
   "host_permissions": [
-    "https://*/*",
     "http://localhost/*",
-    "http://127.0.0.1/*"
+    "https://localhost/*",
+    "http://127.0.0.1/*",
+    "https://127.0.0.1/*"
+  ],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://*/*"
   ],
   "background": {
     "service_worker": "background.js",
@@ -43,14 +49,6 @@
     "page": "options.html",
     "open_in_tab": true
   },
-  "content_scripts": [
-    {
-      "matches": ["https://*/*", "http://*/*"],
-      "js": ["content.js"],
-      "run_at": "document_idle",
-      "all_frames": true
-    }
-  ],
   "web_accessible_resources": [
     {
       "resources": ["auth.html", "img/cps.gif"],

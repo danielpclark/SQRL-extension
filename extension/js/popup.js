@@ -10,11 +10,38 @@ function hostOf(sqrlUrl) {
   return m ? m[1].toLowerCase() : sqrlUrl;
 }
 
+/** Find sqrl:// links on the active tab. Runs in the page under the activeTab grant. */
+function scanPageForSqrlLinks() {
+  const re = /^s?qrl:\/\//i;
+  const out = [];
+  for (const a of document.querySelectorAll('a[href]')) {
+    const href = (a.getAttribute('href') || '').trim();
+    if (re.test(href) && !out.includes(href)) out.push(href);
+    if (out.length >= 10) break;
+  }
+  return out;
+}
+
+async function findLinks(tab) {
+  // Opening the popup is the user gesture that grants activeTab for this tab.
+  try {
+    const results = await api.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, func: scanPageForSqrlLinks });
+    const urls = [];
+    for (const r of results || []) for (const u of r.result || []) if (!urls.includes(u)) urls.push(u);
+    if (urls.length) return urls;
+  } catch (e) {
+    /* chrome:// pages, the store, PDFs: nothing to scan */
+  }
+  // Links reported by the optional always-on content script, if enabled.
+  const { urls } = await api.runtime.sendMessage({ type: 'get-tab-links', tabId: tab.id }).catch(() => ({ urls: [] }));
+  return urls || [];
+}
+
 async function init() {
   const [tab] = await api.tabs.query({ active: true, currentWindow: true });
   const links = $('#links');
   if (tab) {
-    const { urls } = await api.runtime.sendMessage({ type: 'get-tab-links', tabId: tab.id }).catch(() => ({ urls: [] }));
+    const urls = await findLinks(tab);
     if (urls && urls.length) {
       links.append(el('div', { class: 'muted small' }, 'SQRL login available on this page'));
       for (const url of urls.slice(0, 3)) {

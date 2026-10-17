@@ -25,6 +25,8 @@ async function init() {
   for (const id of ids) sel.append(el('option', { value: id.id }, id.name));
   sel.value = settings.defaultIdentity || (ids[0] ? ids[0].id : '');
   $('#askAltId').checked = !!settings.askAltId;
+  const { enabled } = await api.runtime.sendMessage({ type: 'link-handler-status' }).catch(() => ({ enabled: false }));
+  $('#autoLinks').checked = !!enabled;
   $('#closeAfterLogin').checked = !!settings.closeAfterLogin;
   $('#noiptest').checked = !!settings.noiptest;
   $('#rescueSeconds').value = settings.rescueSeconds;
@@ -42,6 +44,30 @@ $('#btnSave').addEventListener('click', async () => {
   });
   toast('Settings saved', 'success');
 });
+const ALL_SITES = { origins: ['https://*/*', 'http://*/*'] };
+$('#autoLinks').addEventListener('change', async (e) => {
+  const box = e.target;
+  try {
+    if (box.checked) {
+      // permissions.request must run inside the click that toggled the box
+      const granted = await api.permissions.request(ALL_SITES);
+      if (!granted) {
+        box.checked = false;
+        toast('Access to all sites was not granted; the toolbar button still works per page.');
+        return;
+      }
+    }
+    const { enabled } = await api.runtime.sendMessage({ type: 'set-link-handler', enabled: box.checked });
+    await store.setSettings({ autoLinks: !!enabled });
+    if (!box.checked) await api.permissions.remove(ALL_SITES).catch(() => {});
+    box.checked = !!enabled;
+    toast(enabled ? 'sqrl:// links are now handled automatically' : 'Automatic link handling disabled', 'success');
+  } catch (err) {
+    box.checked = false;
+    toast(err.message, 'error');
+  }
+});
+
 $('#btnLock').addEventListener('click', async () => {
   await store.clearQuickPass('user request');
   await refreshQuickPass();

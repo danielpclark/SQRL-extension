@@ -55,15 +55,73 @@ async function installRules() {
   }
 }
 
+// ---------------------------------------------------------------------------------------
+// Optional automatic sqrl:// link handling.
+//
+// The extension ships with no content script and no broad host access. The popup inspects
+// the current tab on demand (activeTab). Users who want every sqrl:// link click handled
+// automatically can enable that in the options page, which requests access to all sites and
+// registers content.js dynamically; the registration persists across sessions.
+// ---------------------------------------------------------------------------------------
+
+const LINK_SCRIPT_ID = 'sqrl-links';
+const ALL_SITES = { origins: ['https://*/*', 'http://*/*'] };
+
+async function linkHandlerRegistered() {
+  try {
+    const scripts = await api.scripting.getRegisteredContentScripts({ ids: [LINK_SCRIPT_ID] });
+    return scripts.length > 0;
+  } catch (e) {
+    return false;
+  }
+}
+
+async function setLinkHandler(enabled) {
+  const registered = await linkHandlerRegistered();
+  if (enabled) {
+    if (!(await api.permissions.contains(ALL_SITES))) return false;
+    if (!registered) {
+      await api.scripting.registerContentScripts([
+        {
+          id: LINK_SCRIPT_ID,
+          js: ['content.js'],
+          matches: ['https://*/*', 'http://*/*'],
+          runAt: 'document_idle',
+          allFrames: true,
+          persistAcrossSessions: true
+        }
+      ]);
+    }
+    return true;
+  }
+  if (registered) await api.scripting.unregisterContentScripts({ ids: [LINK_SCRIPT_ID] });
+  return false;
+}
+
+async function syncLinkHandler() {
+  try {
+    const { settings } = await api.storage.local.get('settings');
+    const wanted = !!(settings && settings.autoLinks);
+    await setLinkHandler(wanted);
+  } catch (e) {
+    console.warn('SQRL: link handler sync failed', e);
+  }
+}
+
 api.runtime.onInstalled.addListener(() => {
   installRules();
+  syncLinkHandler();
 });
 api.runtime.onStartup.addListener(() => {
   installRules();
+  syncLinkHandler();
 });
 // Service workers may be restarted without onInstalled/onStartup firing; rules are
 // persistent, but re-asserting them is cheap and keeps the extension URL in sync.
 installRules();
+if (api.permissions.onRemoved) {
+  api.permissions.onRemoved.addListener(() => syncLinkHandler());
+}
 
 // ---------------------------------------------------------------------------------------
 // QuickPass lifecycle
@@ -182,6 +240,13 @@ api.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       case 'reinstall-rules': {
         await installRules();
         return { ok: true };
+      }
+      case 'set-link-handler': {
+        const enabled = await setLinkHandler(!!msg.enabled);
+        return { ok: true, enabled };
+      }
+      case 'link-handler-status': {
+        return { enabled: await linkHandlerRegistered() };
       }
       default:
         return { error: 'unknown message' };

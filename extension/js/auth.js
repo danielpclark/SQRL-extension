@@ -291,9 +291,6 @@ async function send(build) {
 
 /** Open the session and run the initial query (trying older previous identities as needed). */
 async function startSession() {
-  if (!(await ensureHostPermission(S.urlInfo.postUrl))) {
-    throw new Error('Permission to contact ' + S.urlInfo.host + ' was not granted.');
-  }
   if (S.session) await core().free(S.session);
   const altId = S.globals.askAltId ? $('#altId').value.trim() : '';
   const s = await core().call('sessionNew', { unlocked: S.unlocked, url: sqrlUrl, options: options(), altId });
@@ -471,6 +468,12 @@ async function run(action) {
     if (!password) {
       toast('Enter your password', 'error');
       $('#password').focus();
+      return;
+    }
+    // Access to this one site is requested here, while the click that submitted the form
+    // still counts as a user gesture (EnScrypt below takes seconds and would outlive it).
+    if (!(await ensureHostPermission(S.urlInfo.postUrl))) {
+      result(`The browser did not grant access to ${S.urlInfo.host}, so the login cannot be sent. Try again and allow the request.`, { kind: 'error', retry: true });
       return;
     }
     await unlock(password);

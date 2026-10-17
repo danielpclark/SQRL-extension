@@ -8,6 +8,9 @@ export const DEFAULT_SETTINGS = {
   askAltId: false,
   rescueSeconds: 5,
   closeAfterLogin: true,
+  // Register content.js on all sites to catch sqrl:// link clicks (needs all-sites access,
+  // granted from the options page). Off by default; the popup scans the active tab instead.
+  autoLinks: false,
   // Send opt=noiptest. Off by default: for a same-device login the IPs must match, and the
   // server's IP check is one of SQRL's anti-spoofing protections. Only for VPN/proxy setups
   // where the check is known to fail.

@@ -48,11 +48,13 @@ Signs the user in to SQRL-enabled websites using the SQRL authentication protoco
 **Permission justifications:**
 
 - `storage`: Stores the user's SQRL identities (encrypted with the user's password in the standard S4 format) and the extension's settings locally. Session storage holds the QuickPass material in memory only.
-- `tabs`: After a successful SQRL login the website returns a one-time logged-in URL (Client Provided Session); the extension navigates the originating tab to it. Also used to show "Log in" buttons in the popup for SQRL links found on the active tab.
 - `alarms`: Expires the QuickPass after the idle timeout configured in the user's identity.
 - `idle`: Clears the QuickPass when the system locks or goes idle, as the SQRL specification's identity options require.
-- `declarativeNetRequest`: SQRL websites detect a local SQRL client by requesting an image from http://localhost:25519/ and then navigate to http://localhost:25519/<encoded login URL>. Two redirect rules answer that probe with a bundled 1×1 GIF and turn that navigation into the extension's own login page. No request to any other host is observed or modified.
-- Host permission `https://*/*` (and `http://localhost/*`, `http://127.0.0.1/*` for local development servers): The extension must POST SQRL authentication messages to the SQRL endpoint of whichever website the user chooses to sign in to; the set of such sites is not known in advance. The content script runs on pages only to detect links using the `sqrl:` scheme and hand them to the extension when clicked.
+- `activeTab`: When the user opens the toolbar popup, the extension looks at that tab for links using the `sqrl:` scheme so it can offer a "Log in" button. Nothing runs on any tab without that user action.
+- `scripting`: Runs the small link-detection function on the active tab under the `activeTab` grant. Also used to register the optional link-handling content script if the user enables that setting (see optional host permissions).
+- `declarativeNetRequest`: SQRL websites detect a local SQRL client by requesting an image from http://localhost:25519/ and then navigate to http://localhost:25519/<encoded login URL>. Two redirect rules answer that probe with a bundled 1×1 GIF and turn that navigation into the extension's own login page. The rules match only `localhost` and `127.0.0.1` on port 25519.
+- Host permissions `http(s)://localhost/*` and `http(s)://127.0.0.1/*`: Required for the redirect rules above and for the local development test server.
+- Optional host permissions `https://*/*`, `http://*/*`: Requested per site at the moment the user logs in to that site, because the extension must POST SQRL authentication messages to the SQRL endpoint of whichever website the user chose; the set of sites is not known in advance. Access to all sites is requested only if the user turns on the optional "handle sqrl:// links automatically" setting, which registers a content script that solely watches for `sqrl:` links.
 
 **Remote code:** No, I am not using remote code. (The WebAssembly module is bundled in the package; `'wasm-unsafe-eval'` in the CSP only allows the bundled module to be instantiated.)
 

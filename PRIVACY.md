@@ -25,15 +25,22 @@ has no analytics, no telemetry, no update checks of its own, and no remote code.
 ## Permissions
 
 * `storage`: to keep your encrypted identities and settings.
-* `tabs`: to send the signed-in tab to the website's post-login page (Client Provided
-  Session) and to offer login buttons for SQRL links found on the current tab.
 * `alarms`, `idle`: to expire the QuickPass after your chosen idle time and on system lock.
-* `declarativeNetRequest`: to answer websites' probes for a local SQRL client on
-  `localhost:25519` and to turn their same-device login navigation into the extension's own
-  login page. No request to any other host is observed or modified.
-* Host access to `https://*/*`: to POST SQRL authentication messages to the SQRL endpoint
-  of whichever site you are signing in to, and to find `sqrl://` links on pages. The
-  content script only looks for links with the `sqrl:` scheme.
+* `activeTab` and `scripting`: when you open the toolbar popup, a small function runs in
+  the current tab to look for links with the `sqrl:` scheme, so the popup can offer a
+  "Log in" button for them. Nothing else on the page is read, and nothing runs on tabs you
+  did not open the popup on.
+* `declarativeNetRequest` with host access to `localhost` and `127.0.0.1`: to answer
+  websites' probes for a local SQRL client on `localhost:25519` and to turn their
+  same-device login navigation into the extension's own login page. No request to any
+  other host is observed or modified.
+* Per-site access, requested when you log in: before the extension POSTs the SQRL
+  authentication messages to a site, the browser asks you to allow access to that one
+  site. Access is only ever requested for sites you chose to sign in to.
+* Optional access to all sites: the options page offers "Handle `sqrl://` link clicks
+  automatically on every website". If you enable it, the browser asks for access to all
+  sites and a content script that only watches for `sqrl:` links is installed. It is off by
+  default and can be turned off again, which also removes the access.
 
 ## Contact
 

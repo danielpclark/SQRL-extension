@@ -17,6 +17,7 @@
     <label>Default identity
       <select id="defaultIdentity"></select>
     </label>
+    <label class="checkbox"><input type="checkbox" id="autoLinks"> <span>Handle <code>sqrl://</code> link clicks automatically on every website. This asks the browser for access to all sites so a small script can watch for such links; without it, use the toolbar button, which only looks at the current page when you click it. Same-device logins on sites that use the standard localhost handoff work either way.</span></label>
     <label class="checkbox"><input type="checkbox" id="askAltId"> Offer an Alt-ID field in the login dialog</label>
     <label class="checkbox"><input type="checkbox" id="closeAfterLogin"> Close the login window automatically after a successful login</label>
     <label class="checkbox"><input type="checkbox" id="noiptest"> <span>Disable the server's same-IP check (send <code>noiptest</code>). Only for VPN or proxy setups where logins fail with an IP mismatch; this removes one of SQRL's anti-spoofing protections.</span></label>

@@ -46,10 +46,14 @@ python3 -m pip install zxing-cpp numpy && node tests/qr-check.mjs
 
 The only network requests the extension makes are HTTPS POSTs of SQRL protocol messages
 (`extension/js/client.js`, `postRequest`) to the SQRL endpoint of the site the user is
-signing in to, with `credentials: 'omit'` and `redirect: 'error'`. The content script
-(`extension/content.js`) only looks for anchors whose `href` uses the `sqrl:` scheme. The two
-`declarativeNetRequest` rules (`extension/background.js`, `installRules`) only match
-`http(s)://localhost:25519/` and `http(s)://127.0.0.1:25519/`, the port the SQRL
-specification assigns to local clients.
+signing in to, with `credentials: 'omit'` and `redirect: 'error'`. Host access for that
+site is requested from the user at login time (`ensureHostPermission`, optional host
+permissions). The popup runs one function on the active tab (`scanPageForSqrlLinks` in
+`extension/js/popup.js`) that only collects anchors whose `href` uses the `sqrl:` scheme.
+`extension/content.js` is not declared in the manifest; it is registered dynamically only
+if the user enables "handle sqrl:// links automatically" in the options page, which first
+requests all-sites access. The two `declarativeNetRequest` rules (`extension/background.js`,
+`installRules`) only match `http(s)://localhost:25519/` and `http(s)://127.0.0.1:25519/`,
+the port the SQRL specification assigns to local clients.
 
 Specification: https://www.grc.com/sqrl/sqrl.htm (Steve Gibson, GRC; public domain).
