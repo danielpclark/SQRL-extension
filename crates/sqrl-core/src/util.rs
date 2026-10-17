@@ -41,7 +41,7 @@ pub fn hex_encode(data: &[u8]) -> String {
 /// Hex decoding (case-insensitive, whitespace ignored).
 pub fn hex_decode(text: &str) -> Result<Vec<u8>> {
     let cleaned: Vec<u8> = text.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
-    if cleaned.len() % 2 != 0 {
+    if !cleaned.len().is_multiple_of(2) {
         return Err(Error::Format("odd-length hex string".into()));
     }
     let mut out = Vec::with_capacity(cleaned.len() / 2);

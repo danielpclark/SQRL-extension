@@ -1,23 +1,24 @@
 {
   "manifest_version": 3,
   "name": "SQRL Login",
-  "version": "0.1.0",
-  "description": "Secure Quick Reliable Login (SQRL) client: log in to SQRL-enabled websites with a single identity, no passwords. Rust/WebAssembly core.",
-  "author": "SQRL-extension contributors",
+  "version": "1.0.0",
+  "description": "Passwordless sign-in with SQRL (Secure Quick Reliable Login): one identity, a unique key per site, nothing to phish.",
+  "author": "Daniel P. Clark",
   "homepage_url": "https://github.com/danielpclark/SQRL-extension",
   "icons": {
     "16": "icons/icon16.png",
     "32": "icons/icon32.png",
     "48": "icons/icon48.png",
-    "128": "icons/icon128.png"
+    "96": "icons/icon96.png",
+    "128": "icons/icon128.png",
+    "256": "icons/icon256.png"
   },
   "permissions": [
     "storage",
     "tabs",
     "alarms",
     "idle",
-    "declarativeNetRequest",
-    "scripting"
+    "declarativeNetRequest"
   ],
   "host_permissions": [
     "https://*/*",
@@ -34,7 +35,8 @@
     "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon16.png",
-      "32": "icons/icon32.png"
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png"
     }
   },
   "options_ui": {
@@ -60,8 +62,11 @@
   },
   "browser_specific_settings": {
     "gecko": {
-      "id": "sqrl-login@sqrl-extension",
-      "strict_min_version": "128.0"
+      "id": "sqrl-login@danielpclark.github.io",
+      "strict_min_version": "142.0",
+      "data_collection_permissions": {
+        "required": ["none"]
+      }
     }
   }
 }

@@ -435,7 +435,7 @@ impl Type3Block {
             return Err(Error::Format("type 3 block has edition 0".into()));
         }
         let body = b.len() - TYPE3_PT_LEN - 16;
-        if body % 32 != 0 || body == 0 || body / 32 > MAX_PREVIOUS_KEYS {
+        if !body.is_multiple_of(32) || body == 0 || body / 32 > MAX_PREVIOUS_KEYS {
             return Err(Error::Format(format!(
                 "type 3 block length {} is not 54, 86, 118 or 150",
                 b.len()

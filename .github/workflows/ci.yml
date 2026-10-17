@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    name: Rust tests, wasm build, smoke tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install wasm-bindgen-cli (pinned to the crate version)
+        run: cargo install wasm-bindgen-cli --version 0.2.129 --locked
+      - name: Format check
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --release --workspace -- -D warnings
+      - name: Rust tests
+        run: cargo test --release -p sqrl-core
+      - name: Build extension bundles
+        run: ./build.sh
+      - name: Build test server
+        run: cargo build --release -p sqrl-test-server
+      - name: Node smoke test (wasm + HTTP test server)
+        run: node tests/smoke.mjs
+      - name: QR encoder cross-check
+        run: |
+          python3 -m pip install --quiet zxing-cpp numpy
+          node tests/qr-check.mjs
+      - name: Lint Firefox bundle with web-ext
+        run: npx --yes web-ext lint --source-dir dist/firefox
+      - uses: actions/upload-artifact@v4
+        with:
+          name: extension-bundles
+          path: dist/*.zip

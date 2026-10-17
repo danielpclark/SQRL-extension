@@ -495,7 +495,7 @@ dependencies = [
 
 [[package]]
 name = "sqrl-core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "aes-gcm",
  "base64",
@@ -512,7 +512,7 @@ dependencies = [
 
 [[package]]
 name = "sqrl-test-server"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "base64",
  "getrandom",
@@ -521,7 +521,7 @@ dependencies = [
 
 [[package]]
 name = "sqrl-wasm"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "getrandom",
  "js-sys",

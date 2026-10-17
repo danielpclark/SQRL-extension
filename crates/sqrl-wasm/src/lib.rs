@@ -381,6 +381,7 @@ impl SqrlIdentityFile {
     /// Re-key: a new IUK is generated; the old one (recovered with the old rescue code) becomes
     /// a previous identity. Returns the new unlocked identity.
     #[wasm_bindgen]
+    #[allow(clippy::too_many_arguments)]
     pub fn rekey(
         &mut self,
         unlocked: &SqrlUnlocked,
