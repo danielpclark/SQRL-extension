@@ -1,0 +1,67 @@
+{
+  "manifest_version": 3,
+  "name": "SQRL Login",
+  "version": "0.1.0",
+  "description": "Secure Quick Reliable Login (SQRL) client: log in to SQRL-enabled websites with a single identity, no passwords. Rust/WebAssembly core.",
+  "author": "SQRL-extension contributors",
+  "homepage_url": "https://github.com/danielpclark/SQRL-extension",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": [
+    "storage",
+    "tabs",
+    "alarms",
+    "idle",
+    "declarativeNetRequest",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://*/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "scripts": ["background.js"],
+    "type": "module"
+  },
+  "action": {
+    "default_title": "SQRL Login",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png"
+    }
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*/*", "http://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["auth.html", "img/cps.gif"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src https: http://localhost:* http://127.0.0.1:*"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "sqrl-login@sqrl-extension",
+      "strict_min_version": "128.0"
+    }
+  }
+}

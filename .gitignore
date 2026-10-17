@@ -1,0 +1,5 @@
+/target
+/extension/pkg
+/dist
+*.zip
+node_modules

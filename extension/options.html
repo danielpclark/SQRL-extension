@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>SQRL Login settings</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="page">
+  <header class="bar">
+    <img src="icons/icon32.png" alt="">
+    <h1>SQRL Login settings</h1>
+    <nav><a href="identity.html">Identities</a></nav>
+  </header>
+
+  <section class="card">
+    <h2 style="margin-top:0">General</h2>
+    <label>Default identity
+      <select id="defaultIdentity"></select>
+    </label>
+    <label class="checkbox"><input type="checkbox" id="askAltId"> Offer an Alt-ID field in the login dialog</label>
+    <label class="checkbox"><input type="checkbox" id="closeAfterLogin"> Close the login window automatically after a successful login</label>
+    <label>Rescue-code encryption time <span class="hint">(seconds of EnScrypt when creating or re-keying an identity)</span>
+      <input type="number" id="rescueSeconds" min="1" max="60">
+    </label>
+    <div class="row"><button class="primary" id="btnSave">Save</button></div>
+  </section>
+
+  <section class="card">
+    <h2 style="margin-top:0">QuickPass</h2>
+    <p class="muted" id="qpStatus"></p>
+    <div class="row"><button id="btnLock">Clear QuickPass now</button></div>
+  </section>
+
+  <section class="card">
+    <h2 style="margin-top:0">Same-device login (CPS)</h2>
+    <p class="muted">Websites detect a local SQRL client by probing <code>http://localhost:25519/</code>. This extension answers that probe and handles the resulting navigation itself, so sites log you straight in without a round trip through their server-side poll. If a site stops detecting the client, re-install the rules.</p>
+    <div class="row"><button id="btnRules">Re-install CPS rules</button></div>
+  </section>
+
+  <section class="card">
+    <h2 style="margin-top:0">About</h2>
+    <p class="muted">SQRL (Secure Quick Reliable Login) was designed by Steve Gibson of GRC. This extension implements the SQRL client protocol, identity storage (S4), identity lock and textual identities with a Rust core compiled to WebAssembly. Nothing ever leaves your browser except signed, per-site, pseudonymous public keys.</p>
+    <p class="muted small">Extension id: <code id="extId"></code></p>
+  </section>
+  <script type="module" src="js/options.js"></script>
+</body>
+</html>

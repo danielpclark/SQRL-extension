@@ -1,0 +1,20 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/sqrl-core",
+    "crates/sqrl-wasm",
+    "crates/sqrl-test-server",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/danielpclark/SQRL-extension"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SQRL Login</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="auth">
+  <header class="bar">
+    <img src="icons/icon32.png" alt="">
+    <h1>SQRL Login</h1>
+  </header>
+
+  <section class="card" id="site">
+    <div class="muted small">Sign in to</div>
+    <div class="site-host" id="host">…</div>
+    <div class="muted small mono" id="siteKey"></div>
+    <div class="warn" id="insecure" hidden>Development site: plain-HTTP connection to localhost.</div>
+    <div class="warn" id="remoteWarn" hidden>This login was not started from this browser (no same-device session). Only continue if you expect it.</div>
+  </section>
+
+  <section class="card" id="panel-identity" hidden>
+    <form id="unlockForm" autocomplete="off">
+      <label>Identity
+        <select id="identity"></select>
+      </label>
+      <div id="altIdRow" hidden>
+        <label>Alt-ID <span class="hint">(optional: a different identity on this site)</span>
+          <input type="text" id="altId" autocomplete="off">
+        </label>
+      </div>
+      <label id="pwLabel">Password
+        <input type="password" id="password" autocomplete="current-password" autofocus>
+      </label>
+      <div class="muted small" id="qpHint" hidden></div>
+      <details>
+        <summary>Options</summary>
+        <label class="checkbox"><input type="checkbox" id="optSqrlOnly"> Ask the site to disable other login methods (SQRL only)</label>
+        <label class="checkbox"><input type="checkbox" id="optHardlock"> Ask the site to disable account recovery bypass (hard lock)</label>
+        <label class="checkbox"><input type="checkbox" id="optRemember" checked> Enable QuickPass after this login</label>
+      </details>
+      <div class="row">
+        <button type="submit" class="primary" id="btnLogin">Log in</button>
+        <button type="button" id="btnCancel">Cancel</button>
+      </div>
+      <details id="advanced">
+        <summary>Advanced: manage SQRL on this site</summary>
+        <p class="muted small">These act on the account this identity has on the site. Enabling or removing requires your rescue code.</p>
+        <div class="row">
+          <button type="button" id="btnDisable">Disable SQRL login</button>
+          <button type="button" id="btnEnable">Re-enable</button>
+          <button type="button" class="danger" id="btnRemove">Remove association</button>
+        </div>
+      </details>
+    </form>
+  </section>
+
+  <section class="card" id="panel-noidentity" hidden>
+    <p>You have no SQRL identity yet.</p>
+    <div class="row">
+      <button class="primary" id="btnCreate">Create or import an identity</button>
+      <button id="btnCancel2">Cancel</button>
+    </div>
+  </section>
+
+  <section class="card" id="panel-progress" hidden>
+    <p id="progressText">Working…</p>
+    <progress id="progressBar" max="100" value="0"></progress>
+  </section>
+
+  <section class="card" id="panel-rescue" hidden>
+    <p id="rescueText"></p>
+    <label>Rescue code
+      <input type="text" id="rescueCode" inputmode="numeric" autocomplete="off" placeholder="0000-0000-0000-0000-0000-0000">
+    </label>
+    <div class="row">
+      <button class="primary" id="btnRescueOk">Continue</button>
+      <button id="btnRescueCancel">Cancel</button>
+    </div>
+  </section>
+
+  <section class="card" id="panel-confirm" hidden>
+    <p id="confirmText"></p>
+    <div class="row">
+      <button class="primary" id="btnConfirmYes">Continue</button>
+      <button id="btnConfirmNo">Cancel</button>
+    </div>
+  </section>
+
+  <section class="card" id="panel-ask" hidden>
+    <div class="muted small">The site asks:</div>
+    <p id="askText"></p>
+    <div class="row" id="askButtons"></div>
+  </section>
+
+  <section class="card" id="panel-result" hidden>
+    <p id="resultText"></p>
+    <div class="row">
+      <button class="primary" id="btnDone">Close</button>
+      <button id="btnRetry" hidden>Try again</button>
+    </div>
+  </section>
+
+  <script type="module" src="js/auth.js"></script>
+</body>
+</html>

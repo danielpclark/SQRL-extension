@@ -1,0 +1,16 @@
+[package]
+name = "sqrl-test-server"
+description = "Minimal HTTP SQRL server (plain http on localhost) for exercising the extension end to end"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "sqrl-test-server"
+path = "src/main.rs"
+
+[dependencies]
+sqrl-core = { path = "../sqrl-core", features = ["server"] }
+base64 = "0.22"
+getrandom = "0.2"

@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>SQRL identities</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="page">
+  <header class="bar">
+    <img src="icons/icon32.png" alt="">
+    <h1>SQRL identities</h1>
+    <nav><a href="options.html">Settings</a></nav>
+  </header>
+
+  <div class="tabs">
+    <button data-tab="list" class="active">Your identities</button>
+    <button data-tab="create">Create new</button>
+    <button data-tab="import">Import</button>
+  </div>
+
+  <!-- ===================== list ===================== -->
+  <section id="tab-list">
+    <section class="card">
+      <ul class="list" id="identityList"></ul>
+      <p class="muted" id="emptyList" hidden>No identities yet. Create a new one or import an existing SQRL identity.</p>
+    </section>
+
+    <section class="card" id="detail" hidden>
+      <h2 style="margin-top:0" id="detailName"></h2>
+      <dl class="kv">
+        <dt>Fingerprint</dt><dd class="mono" id="detailFp">(unlock to show)</dd>
+        <dt>Created</dt><dd id="detailCreated"></dd>
+        <dt>Previous identities</dt><dd id="detailPrev"></dd>
+        <dt>Password iterations</dt><dd id="detailIters"></dd>
+      </dl>
+      <div class="row">
+        <button id="btnRename">Rename</button>
+        <button id="btnDefault">Make default</button>
+        <button id="btnExport">Export / back up</button>
+        <button id="btnChangePw">Change password / settings</button>
+        <button id="btnRekey">Re-key identity</button>
+        <button class="danger" id="btnDelete">Delete</button>
+      </div>
+
+      <div id="export" hidden>
+        <h3>Export</h3>
+        <p class="muted small">The full identity file contains your password-encrypted master key and your rescue-code-encrypted unlock key. The rescue-only forms contain just the latter and can only be used together with your rescue code.</p>
+        <div class="row">
+          <button id="btnExportFile">Download identity file (.sqrl)</button>
+          <button id="btnExportRescueFile">Download rescue-only file (.sqrc)</button>
+          <button id="btnExportText">Copy SQRLDATA text</button>
+        </div>
+        <h3>Textual identity (rescue only)</h3>
+        <textarea class="textual" id="textual" readonly></textarea>
+        <div class="row"><button id="btnCopyTextual">Copy</button></div>
+        <h3>QR code (rescue only)</h3>
+        <canvas class="qr" id="qrCanvas"></canvas>
+      </div>
+
+      <div id="changePw" hidden>
+        <h3>Change password and settings</h3>
+        <form id="changePwForm" autocomplete="off">
+          <label>Current password <input type="password" id="cpOld" autocomplete="off"></label>
+          <label>New password <span class="hint">(leave blank to keep)</span><input type="password" id="cpNew" autocomplete="new-password"></label>
+          <label>Confirm new password <input type="password" id="cpNew2" autocomplete="new-password"></label>
+          <label>QuickPass length <span class="hint">(leading password characters)</span><input type="number" id="cpHint" min="1" max="255"></label>
+          <label>QuickPass idle timeout (minutes, 0 = never) <input type="number" id="cpIdle" min="0" max="65535"></label>
+          <label>Password verification time (seconds) <input type="number" id="cpVerify" min="1" max="255"></label>
+          <label class="checkbox"><input type="checkbox" id="cpSqrlOnly"> Request SQRL-only login on sites (sqrlonly)</label>
+          <label class="checkbox"><input type="checkbox" id="cpHardlock"> Request no account-recovery bypass on sites (hardlock)</label>
+          <label class="checkbox"><input type="checkbox" id="cpClearIdle"> Clear QuickPass when the system goes idle</label>
+          <label class="checkbox"><input type="checkbox" id="cpWarnRemote"> Warn when a login is not same-device</label>
+          <div class="row"><button type="submit" class="primary">Apply</button><button type="button" id="btnChangePwCancel">Cancel</button></div>
+        </form>
+      </div>
+
+      <div id="rekey" hidden>
+        <h3>Re-key identity</h3>
+        <p class="muted small">Re-keying generates a brand-new master key. Your old identity is kept as a "previous identity" so that sites automatically update to the new key the next time you log in. You need your current rescue code; a new rescue code will be generated.</p>
+        <form id="rekeyForm" autocomplete="off">
+          <label>Current password <input type="password" id="rkPassword" autocomplete="off"></label>
+          <label>Current rescue code <input type="text" id="rkRescue" inputmode="numeric" autocomplete="off" placeholder="0000-0000-0000-0000-0000-0000"></label>
+          <div class="row"><button type="submit" class="primary danger">Re-key now</button><button type="button" id="btnRekeyCancel">Cancel</button></div>
+        </form>
+      </div>
+    </section>
+  </section>
+
+  <!-- ===================== create ===================== -->
+  <section id="tab-create" hidden>
+    <section class="card" id="create-step1">
+      <h2 style="margin-top:0">Create a new identity</h2>
+      <p class="muted">One identity serves every SQRL site you will ever use. Sites only ever see a unique public key derived for them; nothing links your accounts together.</p>
+      <form id="createForm" autocomplete="off">
+        <label>Name <span class="hint">(only shown in this extension)</span><input type="text" id="crName" value="My identity"></label>
+        <label>Password <span class="hint">(long is better; it only protects the identity on this device)</span><input type="password" id="crPassword" autocomplete="new-password"></label>
+        <label>Confirm password <input type="password" id="crPassword2" autocomplete="new-password"></label>
+        <div class="row"><button type="submit" class="primary">Create</button></div>
+      </form>
+    </section>
+    <section class="card" id="create-step2" hidden>
+      <p id="createProgressText">Generating…</p>
+      <progress id="createProgress" max="100" value="0"></progress>
+    </section>
+    <section class="card" id="create-step3" hidden>
+      <h2 style="margin-top:0">Your rescue code</h2>
+      <p>Write this code down and keep it somewhere safe. It is the <strong>only</strong> way to recover your identity if you forget your password, and it is needed to re-enable or remove accounts and to re-key. It cannot be shown again.</p>
+      <div class="rescue" id="rescueShow"></div>
+      <form id="confirmRescueForm" autocomplete="off">
+        <label>Type the rescue code to confirm you saved it <input type="text" id="rescueConfirm" inputmode="numeric" autocomplete="off"></label>
+        <div class="row"><button type="submit" class="primary">I have saved my rescue code</button></div>
+      </form>
+    </section>
+    <section class="card" id="create-step4" hidden>
+      <h2 style="margin-top:0">Identity created</h2>
+      <p>Back it up now: download the identity file and keep it with your rescue code.</p>
+      <div class="row"><button class="primary" id="btnCreatedExport">Export / back up</button><button id="btnCreatedDone">Done</button></div>
+    </section>
+  </section>
+
+  <!-- ===================== import ===================== -->
+  <section id="tab-import" hidden>
+    <section class="card">
+      <h2 style="margin-top:0">Import an identity</h2>
+      <p class="muted">Accepts a SQRL identity file (<code>.sqrl</code> / <code>.sqrc</code>), the <code>SQRLDATA…</code> text form, or a textual (base56) identity printed by another client.</p>
+      <form id="importForm" autocomplete="off">
+        <label>Name <input type="text" id="imName" value="Imported identity"></label>
+        <label>Identity file <input type="file" id="imFile"></label>
+        <label>…or paste text <textarea id="imText" placeholder="SQRLDATA… or the base56 textual identity"></textarea></label>
+        <div class="row"><button type="submit" class="primary">Next</button></div>
+      </form>
+    </section>
+    <section class="card" id="import-step2" hidden>
+      <p id="importInfo"></p>
+      <form id="importForm2" autocomplete="off">
+        <div id="imPwRow"><label>Identity password <input type="password" id="imPassword" autocomplete="off"></label></div>
+        <div id="imRescueRow" hidden>
+          <label>Rescue code <input type="text" id="imRescue" inputmode="numeric" autocomplete="off" placeholder="0000-0000-0000-0000-0000-0000"></label>
+          <label>New password for this device <input type="password" id="imNewPassword" autocomplete="new-password"></label>
+          <label>Confirm new password <input type="password" id="imNewPassword2" autocomplete="new-password"></label>
+        </div>
+        <div class="row"><button type="submit" class="primary">Import</button><button type="button" id="btnImportCancel">Cancel</button></div>
+      </form>
+    </section>
+    <section class="card" id="import-step3" hidden>
+      <p id="importProgressText">Working…</p>
+      <progress id="importProgress" max="100" value="0"></progress>
+    </section>
+  </section>
+
+  <script type="module" src="js/identity.js"></script>
+</body>
+</html>
